@@ -489,12 +489,12 @@ module Legion
                 text_parts << canonical_content_block(bs)
               when 'tool_use'
                 tool_calls << { id: bs[:id], name: bs[:name], arguments: bs[:input] || {} }
-              when 'thinking', 'redacted_thinking'
-                # Carry thinking via canonical Thinking on the request — for
-                # multi-turn replay R5 says signatures must round-trip on
-                # same-provider; leave them in the message for now (the
-                # provider translator drops them for cross-provider).
+              when 'thinking', 'redacted_thinking', 'server_tool_use', 'server_tool_result'
+                # Preserve the existing replay policy for thinking and completed
+                # daemon activity; neither becomes a client-owned pending call.
                 next
+              else
+                raise Legion::LLM::Errors::InvalidRequest, "Unsupported assistant content block type: #{type}"
               end
             end
 

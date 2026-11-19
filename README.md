@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.18-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.19-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -170,16 +170,19 @@ Requests flow through the full Inference pipeline — routing, metering, audit, 
 
 Anthropic `image` source envelopes, OpenAI Chat `image_url` parts, and Responses
 `input_image` parts normalize to canonical image blocks. Supported sources are
-absolute HTTP(S) URLs and nonempty base64 data with an explicit `image/jpeg`,
-`image/png`, `image/gif`, or `image/webp` MIME type.
+absolute HTTP(S) URLs and nonempty base64 data with an explicit image MIME type.
+MIME types are lowercased and `image/jpg` becomes `image/jpeg`. ASCII whitespace
+and omitted base64 padding are normalized; invalid encodings still return 400.
+Image formats such as HEIC remain available to providers that support them;
+the selected provider determines format support.
 
 Mixed text/image order is preserved. Anthropic `tool_result` images retain their
 tool-call association. Image `detail` and `cache_control` survive the canonical
 inference boundary; their provider-wire rendering belongs to the selected
 `lex-llm-*` adapter. Image requests require a vision-capable routing candidate.
 
-Malformed sources, provider-specific `file_id` references, and Responses
-`image_generation_call` history are rejected with HTTP 400
+Malformed sources, provider-specific `file_id` references, Responses
+`image_generation_call` history, and unsupported content block types are rejected with HTTP 400
 (`invalid_request_error`) before an event stream opens. They are not silently
 converted to empty images or discarded.
 
@@ -695,8 +698,9 @@ Prompt audit capture is a projection, not a replacement for inference history:
   reusable base64 image data.
 - `transport.max_payload_bytes` also bounds the complete attributed prompt
   event and its encoded/encrypted body. Aggregate overflow removes remaining
-  binary content first, then oldest messages, then bulky nonessential fields
-  with explicit size/digest omissions. Essential identifiers, routing, and
+  binary content first, fingerprints oversized message fields and bulky event
+  fields, then omits oldest messages if necessary. Message roles and tool-result
+  associations survive field compaction. Essential identifiers, routing, and
   usage remain; an envelope that still cannot fit is dropped and logged.
 
 The emitted `capture` object reports `full` versus `projected` mode, message
@@ -705,7 +709,9 @@ counts, binary redaction counts/bytes, omitted-field count, and reasons.
 including media and tool state, independently of projection or generated
 message IDs. The separate embedding/RAG content hash is unchanged.
 
-The post-response timeline records `published`, `disabled`, or `dropped`.
+The post-response timeline records `published`, `spooled`, `disabled`, or `dropped`.
+`spooled` means transport retained the event for later delivery; it does not
+claim broker acceptance or successful delivery.
 GAIA observes the constructed local audit event even if delivery is disabled
 or dropped; additional transport-only compaction can make that local projection
 differ from the transmitted one. Consumers should use the transmitted `capture`
@@ -1140,6 +1146,13 @@ bundle exec rubocop -A
 | `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
+
+For the coordinated LLM release, publish shared `lex-llm` first, the provider
+gems next, and `legion-llm` last. The current targets are `lex-llm 0.8.8`,
+`lex-llm-vllm 0.4.9`, `lex-llm-anthropic 0.3.8`, and `lex-llm-bedrock 0.5.10`.
+Temporary companion commit pins apply only to pull-request CI. Main and scheduled
+CI resolve published gems, and release depends on those checks passing. A green
+PR run against companion commits does not satisfy the publication prerequisite.
 
 ## License
 

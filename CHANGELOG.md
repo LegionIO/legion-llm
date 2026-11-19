@@ -1,5 +1,14 @@
 # Legion LLM Changelog
 
+## [0.16.19] - 2026-11-18
+
+### Fixed
+- Normalize image MIME case and the `image/jpg` alias, strip ASCII whitespace from base64, and restore omitted padding without changing the caller's input. Preserve other image MIME types for provider validation instead of imposing one provider's image-format allowlist at ingress.
+- Reject unsupported content block types with HTTP 400 before inference or streaming begins across Messages, Chat Completions, and Responses.
+- Fingerprint oversized audit message content, tool arguments/results, and metadata before omitting older messages. Compact bulky event fields first, preserve tool IDs, names, message associations and content digests, and retain bounded plaintext/encrypted payloads. Shared audit projection now lives below inference and transport.
+- Report durable spooled prompt audits as `spooled`, distinct from published, disabled, or dropped events. Preserve this status in the execution timeline and local audit observation.
+- Initialize native tool-choice spec cleanup state before setup can raise. Restrict temporary companion-gem CI pins to pull requests so main, scheduled checks, and releases resolve published dependencies.
+
 ## [0.16.18] - 2026-11-18
 
 ### Fixed

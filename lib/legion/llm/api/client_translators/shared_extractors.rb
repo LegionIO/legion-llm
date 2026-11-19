@@ -89,7 +89,9 @@ module Legion
             when 'image_generation_call'
               raise Legion::LLM::Errors::InvalidRequest, 'Generated image history is not supported'
             else
-              part
+              return part if Legion::Extensions::Llm::Canonical::ContentBlock::CONTENT_BLOCK_TYPES.any? { |type| type.to_s == part[:type].to_s }
+
+              raise Legion::LLM::Errors::InvalidRequest, "Unsupported content block type: #{part[:type]}"
             end
           end
 
@@ -128,10 +130,11 @@ module Legion
 
             case source_type
             when :base64
-              raise Legion::LLM::Errors::InvalidRequest, 'Image base64 source requires a supported image MIME type' unless %w[image/jpeg image/png image/gif image/webp].include?(media_type)
-              # A possessive scan validates the alphabet without decoding/copying
-              # the payload or backtracking over attacker-controlled input.
-              raise Legion::LLM::Errors::InvalidRequest, 'Malformed base64 image data' unless (data.bytesize % 4).zero? && %r{\A[A-Za-z0-9+/]*+={0,2}\z}.match?(data)
+              media_type = media_type.to_s.downcase
+              media_type = 'image/jpeg' if media_type == 'image/jpg'
+              raise Legion::LLM::Errors::InvalidRequest, 'Image base64 source requires an image MIME type' unless %r{\Aimage/[a-z0-9][a-z0-9.+_-]*\z}.match?(media_type)
+
+              data = normalized_image_base64(data: data)
             when :url
               uri = URI.parse(data)
               raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be an absolute HTTP(S) URL' unless uri.is_a?(URI::HTTP) && uri.host && !uri.host.empty?
@@ -142,6 +145,17 @@ module Legion
             { type: 'image', data: data, media_type: media_type, source_type: source_type }.compact
           rescue URI::InvalidURIError
             raise Legion::LLM::Errors::InvalidRequest, 'Malformed image URL'
+          end
+
+          def normalized_image_base64(data:, **)
+            normalized = data.match?(/[ \t\r\n\f\v]/) ? data.delete(" \t\r\n\f\v") : data
+            normalized += '=' * ((4 - (normalized.bytesize % 4)) % 4) unless normalized.include?('=')
+            # Validate canonical padding and unused bits without decoding a large
+            # image. Possessive quartets keep scanning linear in payload size.
+            valid = !normalized.empty? && %r{\A(?:[A-Za-z0-9+/]{4})*+(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?\z}.match?(normalized)
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed base64 image data' unless valid
+
+            normalized
           end
 
           # The pipeline envelope's tokens member is a plain Hash (or {} when

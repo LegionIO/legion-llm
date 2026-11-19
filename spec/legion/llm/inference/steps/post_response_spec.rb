@@ -55,7 +55,7 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
   end
 
   describe '#step_post_response' do
-    %i[published disabled dropped].each do |status|
+    %i[published spooled disabled dropped].each do |status|
       it "records the actual #{status} publication outcome without failing the request" do
         step = klass.new(request)
         allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: nil, status: status)
@@ -86,7 +86,7 @@ RSpec.describe Legion::LLM::Inference::Steps::PostResponse do
         end)
       end
 
-      %i[disabled dropped].each do |status|
+      %i[spooled disabled dropped].each do |status|
         it "observes the built event locally even when transport is #{status}" do
           audit_event = { caller: { requested_by: { identity: 'user:matt' } }, response_content: 'answer' }
           allow(Legion::LLM::Inference::AuditPublisher).to receive(:publish).and_return(event: audit_event, status: status)

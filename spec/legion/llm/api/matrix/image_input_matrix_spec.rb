@@ -11,6 +11,27 @@ RSpec.describe '[matrix] image input rejection', type: :request do
   after { MatrixHelper.restore_started_state! }
 
   {
+    '/v1/messages'         => [:messages, %w[document unknown_block]],
+    '/v1/chat/completions' => [:messages, %w[file input_audio unknown_block]],
+    '/v1/responses'        => [:input, %w[input_file unknown_block]]
+  }.each do |path, (key, types)|
+    types.each do |type|
+      [false, true].product(%w[user assistant]).each do |stream, role|
+        it "rejects unsupported #{type} in #{role} content at #{path} before dispatch (stream=#{stream})" do
+          payload = { model: 'fake-default', max_tokens: 64, stream: stream,
+                      key => [{ role: role, content: [{ type: type, source: { type: 'base64', media_type: 'application/pdf', data: 'QUJD' } }] }] }
+          expect(Legion::LLM::Inference::Executor).not_to receive(:new)
+          post path, Legion::JSON.dump(payload), { 'CONTENT_TYPE' => 'application/json' }
+
+          expect(last_response.status).to eq(400)
+          expect(last_response.content_type).to start_with('application/json')
+          expect(Legion::JSON.load(last_response.body).dig(:error, :type)).to eq('invalid_request_error')
+        end
+      end
+    end
+  end
+
+  {
     '/v1/messages'         => {
       malformed: { messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: 'file:///tmp/image.png' } }] }] },
       file:      { messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'file', file_id: 'file-image' } }] }] }

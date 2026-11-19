@@ -23,6 +23,7 @@ RSpec.describe 'Native tool choice lifecycle' do
   end
 
   around do |example|
+    prior = {}
     keys = %i[legion_current_tool_history_index legion_current_tool_call_id legion_current_tool_name legion_current_tool_started_at]
     prior = keys.to_h { |key| [key, Thread.current[key]] }
     example.run

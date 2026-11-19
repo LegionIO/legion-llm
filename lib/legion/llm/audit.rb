@@ -26,6 +26,9 @@ module Legion
           if result.is_a?(Hash) && result[:accepted] == true
             log.info('[llm][audit] published prompt audit')
             :published
+          elsif result.is_a?(Hash) && result[:status] == :spooled
+            log.info('[llm][audit] spooled prompt audit: awaiting transport delivery')
+            :spooled
           else
             log.warn("[llm][audit] dropped prompt audit: transport status=#{result.is_a?(Hash) ? result[:status] : 'unknown'}")
             :dropped

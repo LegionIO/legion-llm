@@ -238,6 +238,30 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
       expect(wire[:capture]).to include(redacted_binary_count: 9, omitted_message_count: 0)
     end
 
+    ['X' * 2_000_000, Legion::JSON.dump(screenshot: 'A' * 1_500_000)].each_with_index do |large_content, index|
+      it "preserves short history and fingerprints an oversized newest #{index.zero? ? 'text message' : 'tool result'}" do
+        event = prompt_audit_event(content: 'small request')
+        event[:messages] = [
+          { role: :user, content: 'small request' },
+          { role: :assistant, content: '', tool_calls: [{ id: 'capture-1', name: 'capture', arguments: {} }] },
+          { role: :tool, tool_call_id: 'capture-1', content: large_content }
+        ]
+        event[:capture] = Legion::LLM::AuditProjection.capture_metadata(message_count: 3)
+        original = Legion::JSON.dump(event)
+        wire = publish_event(event)
+
+        expect(wire[:messages].size).to eq(3)
+        expect(wire[:messages].first[:content]).to eq('small request')
+        expect(wire[:messages].last).to include(role: 'tool', tool_call_id: 'capture-1')
+        expect(wire[:messages].last[:content]).to include(audit_omitted: true,
+                                                          bytes:         Legion::JSON.dump(large_content).bytesize,
+                                                          sha256:        Digest::SHA256.hexdigest(Legion::JSON.dump(large_content)))
+        expect(wire[:capture]).to include(original_message_count: 3, captured_message_count: 3, omitted_message_count: 0, omitted_field_count: 1)
+        expect(wire[:request_content_hash]).to eq(event[:request_content_hash])
+        expect(Legion::JSON.dump(event)).to eq(original)
+      end
+    end
+
     it 'fingerprints bulky non-message content while preserving usage, routing and audit outcomes' do
       response_content = 'R' * 2_000_000
       audit = { 'custom:check' => { outcome: :success, data: 'D' * 2_000_000 } }
@@ -251,24 +275,48 @@ RSpec.describe Legion::LLM::Transport::Messages::PromptEvent do
       expect(wire[:tokens]).to include(input_tokens: 100, output_tokens: 10)
       expect(wire[:request_content_hash]).to eq(event[:request_content_hash])
       expect(wire[:response_content_hash]).to eq(event[:response_content_hash])
-      expect(wire[:capture]).to include(mode: 'projected', omitted_field_count: 2, omitted_message_count: 1)
+      expect(wire[:capture]).to include(mode: 'projected', omitted_field_count: 2, omitted_message_count: 0)
+      expect(wire[:messages].first[:content]).to eq('hello')
+    end
+
+    it 'retains the tool-call ID and name when large arguments are fingerprinted' do
+      arguments = { content: 'A' * 1_500_000 }
+      event = prompt_audit_event(content: 'write a file')
+      event[:messages] = [
+        { role: :user, content: 'write a file' },
+        { role: :assistant, content: '', tool_calls: [{ id: 'write-1', name: 'write_file', arguments: arguments }] },
+        { role: :tool, tool_call_id: 'write-1', content: 'written' }
+      ]
+      event[:capture] = Legion::LLM::AuditProjection.capture_metadata(message_count: 3)
+      original = Legion::JSON.dump(event)
+      wire = publish_event(event)
+
+      call = wire[:messages][1][:tool_calls].first
+      expect(call).to include(id: 'write-1', name: 'write_file')
+      expect(call[:arguments]).to include(audit_omitted: true, bytes: Legion::JSON.dump(arguments).bytesize,
+                                          sha256: Digest::SHA256.hexdigest(Legion::JSON.dump(arguments)))
+      expect(wire[:messages].last).to include(tool_call_id: call[:id], content: 'written')
+      expect(wire[:capture]).to include(omitted_message_count: 0, omitted_field_count: 1)
+      expect(Legion::JSON.dump(event)).to eq(original)
     end
 
     it 'removes oldest audit messages only after binary compaction cannot satisfy the budget' do
       Legion::Settings[:transport][:max_payload_bytes] = 4_096
-      request = Legion::LLM::Inference::Request.build(messages: [
-                                                        { role: :user, content: 'old' * 2_000 }, { role: :user, content: 'recent' }
-                                                      ])
+      messages = Array.new(20) { |index| { role: :user, content: "old-#{index}:#{'x' * 300}" } }
+      messages << { role: :user, content: 'recent' }
+      request = Legion::LLM::Inference::Request.build(messages: messages)
       response = Legion::LLM::Inference::Response.build(
         request_id: 'r', conversation_id: 'conversation', message: { role: :assistant, content: 'answer' }
       )
       event = Legion::LLM::Inference::AuditPublisher.build_event(request: request, response: response)
       wire = publish_event(event)
 
-      expect(wire[:messages].map { |message| message[:content] }).to eq(['recent'])
-      expect(wire[:capture]).to include(original_message_count: 2, captured_message_count: 1, omitted_message_count: 1)
+      retained = wire[:messages].size
+      expect(retained).to be_between(1, messages.size - 1)
+      expect(wire[:messages].map { |message| message[:content] }).to eq(messages.last(retained).map { |message| message[:content] })
+      expect(wire[:capture]).to include(original_message_count: messages.size, captured_message_count: retained, omitted_message_count: messages.size - retained)
       expect(wire[:request_content_hash]).to eq(event[:request_content_hash])
-      expect(request.messages.map(&:content)).to eq(['old' * 2_000, 'recent'])
+      expect(request.messages.map(&:content)).to eq(messages.map { |message| message[:content] })
     end
 
     it 'counts attribution and runtime caller bytes when enforcing a lower configured limit' do
