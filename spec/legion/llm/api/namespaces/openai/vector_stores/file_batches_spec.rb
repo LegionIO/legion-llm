@@ -91,6 +91,60 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores::FileBatches' do
   end
 
   describe 'POST /v1/vector_stores/:id/file_batches' do
+    [20, 2].each do |limit|
+      it "rejects more than #{limit} unique files without batch or file mutation" do
+        Legion::Settings[:llm][:vector_store][:batch_max_files] = limit
+        expect(mock_ds).not_to receive(:insert)
+        expect(mock_ds).not_to receive(:update)
+        expect_any_instance_of(app).not_to receive(:process_batch_files)
+
+        post "/v1/vector_stores/#{store_id}/file_batches",
+             Legion::JSON.dump(file_ids: Array.new(limit + 1) { |i| "file-#{i}" }),
+             'CONTENT_TYPE' => 'application/json'
+
+        expect(last_response.status).to eq(400)
+        expect(Legion::JSON.load(last_response.body).dig(:error, :code)).to eq('file_batch_limit_exceeded')
+      end
+    end
+
+    [%w[file-1], %w[file-1 file-2], %w[file-1 file-2 file-1]].each do |file_ids|
+      it "processes and accounts for every unique ID in #{file_ids.inspect} with a configured limit of two" do
+        Legion::Settings[:llm][:vector_store][:batch_max_files] = 2
+        stored = nil
+        processed = []
+        allow(mock_ds).to receive(:insert) { |row| stored = row if row.key?(:file_ids_json) }
+        allow(mock_ds).to receive(:update) { |row| stored.merge!(row) }
+        allow(mock_ds).to receive(:first) { stored || store_row }
+        allow_any_instance_of(app).to receive(:fetch_file_content) do |_instance, file_id|
+          processed << file_id
+          nil
+        end
+
+        post "/v1/vector_stores/#{store_id}/file_batches",
+             Legion::JSON.dump(file_ids: file_ids), 'CONTENT_TYPE' => 'application/json'
+
+        expect(last_response.status).to eq(200)
+        expect(processed).to eq(file_ids.uniq)
+        expect(Legion::JSON.load(stored[:file_ids_json])).to eq(file_ids.uniq)
+        counts = Legion::JSON.load(last_response.body)[:file_counts]
+        expect(counts).to include(total: file_ids.uniq.size, in_progress: file_ids.uniq.size, failed: 0)
+      end
+    end
+
+    [0, -1, nil, '2'].each do |limit|
+      it "rejects an invalid configured batch limit #{limit.inspect} before processing" do
+        Legion::Settings[:llm][:vector_store][:batch_max_files] = limit
+        expect(mock_ds).not_to receive(:insert)
+        expect_any_instance_of(app).not_to receive(:process_batch_files)
+
+        post "/v1/vector_stores/#{store_id}/file_batches",
+             Legion::JSON.dump(file_ids: ['file-1']), 'CONTENT_TYPE' => 'application/json'
+
+        expect(last_response.status).to eq(500)
+        expect(Legion::JSON.load(last_response.body).dig(:error, :message)).to include('batch_max_files')
+      end
+    end
+
     it 'requires file_ids' do
       post "/v1/vector_stores/#{store_id}/file_batches",
            Legion::JSON.dump({}),

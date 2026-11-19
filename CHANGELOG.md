@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.24] - 2026-11-19
+
+### Fixed
+- Reject vector-store file batches exceeding `llm.vector_store.batch_max_files` before creating or processing a batch, instead of silently dropping files after the first 20 unique IDs. Accepted batches retain every unique ID and accurate counts. Fixes #227.
+
 ## [0.16.23] - 2026-11-19
 
 ### Fixed

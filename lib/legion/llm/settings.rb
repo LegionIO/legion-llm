@@ -42,6 +42,7 @@ module Legion
           gaia:                      gaia_defaults,
           knowledge_capture:         knowledge_capture_defaults,
           embedding:                 embedding_defaults,
+          vector_store:              vector_store_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
           pricing:                   {},
@@ -397,6 +398,10 @@ module Legion
             key_prefix: 'llm:embed'
           }
         }
+      end
+
+      def self.vector_store_defaults
+        { batch_max_files: 20 }
       end
 
       def self.telemetry_defaults
