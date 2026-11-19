@@ -24,6 +24,7 @@ are accepted by the runtime resolver.
 | `moderation` | Maximum inputs per request and generation output tokens. |
 | `tools.native` | Grep include pattern, grep line cap, glob match cap and default web-search result count. Explicit tool-call result counts retain precedence. |
 | `logging`, `compliance.tool_audit_result_max_chars` | Diagnostic previews and tool-result audit clipping in characters; tool-name list cap in names. These do not truncate provider/client tool results. |
+| `background` | Shared inference workers, finite queue capacity in jobs, shutdown wait in seconds. Positive integer workers/capacity; nonnegative finite wait. Defaults are 4/64/5. |
 | `api` | Native chat worker count, native chat shutdown wait in seconds, tier cache TTL in seconds. |
 | `batch`, `scheduling` | Existing batch size/window and scheduling policies. Missing deferred-intent configuration inherits the registered list. |
 | `fleet` | Existing JWT identity/algorithm defaults and publisher-confirm timeout in milliseconds. Fleet protocol and cryptographic contract are unchanged. |
@@ -46,5 +47,17 @@ Protocol identifiers, wire enums/default model names, unit conversions, token
 estimation math and detection patterns remain in their owning algorithms or
 translators. They are not operator budgets or a second model catalog. The unused
 embedding prefix constant was removed; prefix policy already comes from settings.
-The shared inference worker backlog is tracked separately by #222/#191; the native
-HTTP pool settings here do not claim to resolve it.
+The shared inference executor captures its settings on first use. Restart the daemon
+to apply new worker/queue limits. Optional capture, reflection and shadow evaluation
+are skipped with a warning when admission is full or shutting down; there is no
+foreground execution fallback. Prompt audit and metering remain outside this queue.
+Curation retains raw history on rejection and coalesces accepted jobs per conversation:
+one running task plus at most one latest pending task per active key. Follow-ups join
+the queue behind already waiting work, so a busy conversation cannot monopolize a worker. The executor
+retains at most workers + queue capacity admitted jobs, plus one pending closure per
+active keyed job. `Legion::LLM::Inference::Background.stats` exposes queue length,
+capacity, admitted/deferred/keyed jobs and aggregate rejection/coalescing counts without
+request payloads. Deferred follow-ups consume the same finite admitted-job budget.
+Shutdown stops admission and drains accepted jobs. A timeout logs remaining work,
+leaves provider connections available to those jobs, and returns false; call shutdown
+again after they finish. A new pool cannot start while its predecessor is draining.

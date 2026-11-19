@@ -18,6 +18,7 @@ module Legion
           enabled:                   true,
           connected:                 false,
           pipeline_enabled:          true,
+          background:                background_defaults,
           pipeline_async_post_steps: true,
           context_window:            250_000,
           max_output_tokens:         16_384,
@@ -88,7 +89,7 @@ module Legion
       RUNTIME_CONSTRAINTS = {
         positive_integer:    %w[
           moderation.max_inputs moderation.max_output_tokens
-          api.native_chat_pool_size
+          api.native_chat_pool_size background.workers background.max_queue
           embedding.chunk_target_tokens vector_store.max_scan_chunks vector_store.chunk_target_chars
           conversation.max_conversations conversation.metadata_tail_messages
           compressor.summary_token_threshold compressor.summary_input_chars_per_token compressor.dedup_window
@@ -120,7 +121,7 @@ module Legion
           prompt_caching.response_cache.poll_interval_seconds embedding.cache.ttl
         ],
         nonnegative_number:  %w[
-          daemon.health_cache_ttl api.native_chat_shutdown_timeout api.tiers_cache_ttl
+          daemon.health_cache_ttl api.native_chat_shutdown_timeout api.tiers_cache_ttl background.shutdown_timeout
           reflection.cooldown_seconds metering.spool.flush_batch_sleep
           prompt_caching.response_cache.ttl_seconds fleet.dispatch.publish_confirm_timeout_ms
           confidence.hedge_penalty confidence.max_hedge_penalty confidence.structured_output_bonus
@@ -171,6 +172,10 @@ module Legion
         raise ArgumentError, "llm.#{path.join('.')} must be #{kind}, got #{value.inspect}" unless valid
       end
       private_class_method :validate_runtime_value!
+
+      def self.background_defaults
+        { workers: 4, max_queue: 64, shutdown_timeout: 5 }
+      end
 
       def self.register_defaults!
         log.debug '[llm][settings] action=register_defaults'

@@ -11,7 +11,7 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          def step_knowledge_capture
+          def step_knowledge_capture(async: true)
             unless knowledge_capture_enabled?
               log_step_debug(:knowledge_capture, :skipped, reason: :disabled)
               return
@@ -20,7 +20,7 @@ module Legion
             response = current_response
             request = @request
             enrichments = @enrichments
-            writeback_enabled = knowledge_capture_writeback_enabled?
+            writeback_enabled = knowledge_capture_writeback_enabled? && !defined?(Legion::Extensions::Apollo::Helpers::Writeback).nil?
             local_enabled = local_capture_enabled?
             unless writeback_enabled || local_enabled
               log_step_debug(:knowledge_capture, :skipped, reason: :no_targets)
@@ -37,7 +37,7 @@ module Legion
               response_chars:      content_chars
             )
 
-            Executor::ASYNC_THREAD_POOL.post do
+            capture = proc do
               if writeback_enabled && defined?(Legion::Extensions::Apollo::Helpers::Writeback)
                 log_step_debug(:knowledge_capture, :writeback_route)
                 Legion::Extensions::Apollo::Helpers::Writeback.evaluate_and_route(
@@ -52,9 +52,17 @@ module Legion
               handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.async')
             end
 
+            accepted = async ? Background.post(workload: :knowledge_capture, &capture) : capture.call
+            if async && !accepted
+              @timeline.record(category: :knowledge, key: 'knowledge:capture', direction: :outbound,
+                               detail: 'optional knowledge capture skipped: background executor unavailable',
+                               from: 'pipeline', to: 'apollo', data: { status: :skipped })
+              return false
+            end
+
             @timeline.record(
               category: :knowledge, key: 'knowledge:capture',
-              direction: :outbound, detail: 'knowledge capture dispatched async',
+              direction: :outbound, detail: async ? 'knowledge capture dispatched async' : 'knowledge capture completed',
               from: 'pipeline', to: 'apollo'
             )
           rescue StandardError => e
@@ -63,6 +71,11 @@ module Legion
           end
 
           private
+
+          def knowledge_capture_requested?
+            knowledge_capture_enabled? &&
+              ((knowledge_capture_writeback_enabled? && defined?(Legion::Extensions::Apollo::Helpers::Writeback)) || local_capture_enabled?)
+          end
 
           def knowledge_capture_enabled?
             knowledge_capture_setting(:enabled) == true

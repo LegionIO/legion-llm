@@ -30,6 +30,7 @@ RSpec.describe Legion::LLM do
 
     after do
       described_class.shutdown if described_class.started?
+      Legion::LLM::Inference::Background.start
     end
 
     it 'marks connected on start' do
@@ -61,7 +62,22 @@ RSpec.describe Legion::LLM do
     it 'gracefully shuts down the async thread pool on shutdown' do
       described_class.start
       described_class.shutdown
-      expect(Legion::LLM::Inference::Executor::ASYNC_THREAD_POOL.shutdown?).to be true
+      expect(Legion::LLM::Inference::Background.shared.terminated?).to be true
+    end
+
+    it 'keeps provider connections available when background work has not drained' do
+      allow(Legion::LLM::Inference::Background).to receive(:shutdown).and_return(false)
+      expect(Legion::LLM::Call::Registry).not_to receive(:disconnect_all!)
+      expect(Legion::LLM::Call::Registry).not_to receive(:reset!)
+      expect(described_class.shutdown).to be false
+    end
+
+    it 'does not reconfigure providers when a previous background pool is still draining' do
+      allow(Legion::LLM::Inference::Background).to receive(:start).and_raise('inference background jobs are still draining')
+      expect(Legion::LLM::Call::Providers).not_to receive(:setup)
+      expect { described_class.start }.to raise_error(RuntimeError, /still draining/)
+    ensure
+      allow(Legion::LLM::Inference::Background).to receive(:start).and_call_original
     end
 
     it 'registers routes with Legion::API when available on start' do

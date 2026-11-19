@@ -6,6 +6,7 @@ require 'faraday'
 require_relative '../publisher_identity'
 require_relative '../tools/special'
 require_relative '../tools/mcp_execution'
+require_relative 'background'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 require_relative 'executor/routing'
@@ -70,7 +71,7 @@ module Legion
 
         STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 
-        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture].freeze
+        ASYNC_SAFE_STEPS = %i[knowledge_capture].freeze
 
         THINKING_TAG_PAIRS = [
           ['<thinking>', '</thinking>'],
@@ -101,8 +102,6 @@ module Legion
         ].freeze
 
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
-
-        ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
           @request = request
@@ -603,31 +602,38 @@ module Legion
         def execute_post_provider_steps_mixed
           POST_PROVIDER_STEPS.each do |step|
             next if Profile.skip?(@profile, step)
-            next if ASYNC_SAFE_STEPS.include?(step)
+            next if ASYNC_SAFE_STEPS.include?(step) || step == :post_response
 
             execute_step(step) { send(:"step_#{step}") }
           end
 
-          async_steps = POST_PROVIDER_STEPS.select { |s| ASYNC_SAFE_STEPS.include?(s) }
+          # Audit the final envelope after normalization, metering and context
+          # storage, as the old async path did, without optional admission.
+          execute_step(:post_response) { step_post_response } unless Profile.skip?(@profile, :post_response)
+
+          async_steps = ASYNC_SAFE_STEPS.reject { |step| Profile.skip?(@profile, step) }
+          async_steps.delete(:knowledge_capture) unless knowledge_capture_requested?
           return if async_steps.empty?
 
-          # Snapshot timeline and warnings before firing the async thread so that
-          # build_response (called on the main thread immediately after) reads a
-          # consistent, immutable view rather than racing with async writes.
+          # Prompt audit and metering stay outside optional-work admission.
+          # Only capture runs here; its I/O must not enqueue a second job.
           @_response_timeline_snapshot = @timeline.events.dup.freeze
           @_response_warnings_snapshot = @warnings.dup.freeze
           @_response_participants_snapshot = @timeline.participants.dup.freeze
-
           profile = @profile
-          ASYNC_THREAD_POOL.post do
+          accepted = Background.post(workload: :post_steps) do
             async_steps.each do |step|
               next if Profile.skip?(profile, step)
 
-              send(:"step_#{step}")
+              send(:"step_#{step}", async: false)
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.async_post_steps', steps: async_steps)
           end
+          return if accepted
+
+          @warnings << 'optional post-response capture skipped: background executor unavailable'
+          @_response_warnings_snapshot = @warnings.dup.freeze
         end
 
         private :execute_post_provider_steps_mixed

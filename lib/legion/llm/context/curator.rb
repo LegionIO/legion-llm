@@ -32,7 +32,7 @@ module Legion
           current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
           log.debug "[llm][curator] action=curate_turn conversation_id=#{@conversation_id} turn_messages=#{current_turn_count}"
 
-          Inference::Executor::ASYNC_THREAD_POOL.post do
+          accepted = Inference::Background.post(workload: :curation, key: @conversation_id) do
             all_messages = Inference::Conversation.messages(@conversation_id)
 
             # Determine where the current turn starts in the full message list.
@@ -65,6 +65,8 @@ module Legion
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.context_curator.curate_turn')
           end
+          log.warn "[llm][curator] action=deferred conversation_id=#{@conversation_id} reason=background_unavailable policy=retain_raw_history" unless accepted
+          accepted
         end
 
         # Called sync when building next API request.

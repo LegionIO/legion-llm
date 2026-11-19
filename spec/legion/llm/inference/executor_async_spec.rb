@@ -10,8 +10,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       expect(async_safe).not_to include(:context_store)
     end
 
-    it 'includes post_response' do
-      expect(async_safe).to include(:post_response)
+    it 'keeps prompt audit outside optional background admission' do
+      expect(async_safe).not_to include(:post_response)
     end
 
     it 'includes knowledge_capture' do

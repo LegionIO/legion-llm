@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.16.27] - 2026-11-19
+
+### Fixed
+- Bound the shared inference executor through validated `llm.background.workers`, `max_queue` and `shutdown_timeout` settings (defaults: 4 workers, 64 queued jobs, 5 seconds). Saturation explicitly logs and rejects optional capture, reflection and shadow work without executing it on the submitting thread. Fixes #222 and #191, which track the same unbounded pool.
+- Coalesce curation by conversation, retaining only the latest pending job per admitted conversation. Rejected curation retains raw history for future use. Expose queue length, capacity, keyed jobs and rejection/coalescing counts through `Inference::Background.stats`.
+- Keep prompt audit and metering outside optional-work admission, avoid nested capture submission, and drain accepted jobs before disconnecting providers on shutdown. A timed-out drain is logged and keeps accepted work alive; restart waits for the previous pool to terminate.
+
 ## [0.16.26] - 2026-11-19
 
 ### Fixed
