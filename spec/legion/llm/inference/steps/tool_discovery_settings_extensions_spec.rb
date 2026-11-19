@@ -29,6 +29,7 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
         entries = tool_entries
         Module.new do
           define_singleton_method(:tools) { entries }
+          define_singleton_method(:tool_count) { entries.size }
           define_singleton_method(:filter_tools) do |**criteria|
             criteria[:deferred] == false ? entries : []
           end
@@ -49,7 +50,7 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
 
     context 'when Settings::Extensions has no tools' do
       it 'does not discover any tools' do
-        allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
+        allow(Legion::Settings::Extensions).to receive(:tool_count).and_return(0)
 
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)

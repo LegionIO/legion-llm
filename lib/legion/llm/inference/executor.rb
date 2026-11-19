@@ -270,7 +270,6 @@ module Legion
           executed = 0
           skipped = 0
           pipeline_start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-          step_timings = []
           @step_timing_hash = {}
           STEPS.each do |step|
             if Profile.skip?(@profile, step)
@@ -281,16 +280,18 @@ module Legion
             t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
             execute_step(step) { send(:"step_#{step}") }
             elapsed_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
-            step_timings << "#{step}=#{elapsed_ms}ms"
             @step_timing_hash[step] = elapsed_ms
             executed += 1
           end
           total_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - pipeline_start) * 1000).round
           @step_timing_hash[:total] = total_ms
           @timestamps[:step_timings] = @step_timing_hash
-          log.warn("[pipeline][timing] request_id=#{@request.id} conversation_id=#{@request.conversation_id} " \
-                   "provider=#{@resolved_provider} model=#{@resolved_model} profile=#{@profile} " \
-                   "total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
+          log.debug do
+            step_timings = @step_timing_hash.except(:total).map { |step, duration| "#{step}=#{duration}ms" }.join(' ')
+            "[pipeline][timing] request_id=#{@request.id} conversation_id=#{@request.conversation_id} " \
+              "provider=#{@resolved_provider} model=#{@resolved_model} profile=#{@profile} " \
+              "total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings}"
+          end
           annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
 

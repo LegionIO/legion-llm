@@ -1,4 +1,4 @@
-# legion-llm — Agent Notes (v0.13.0)
+# legion-llm — Agent Notes (v0.16.21)
 
 `legion-llm` is a **universal translation proxy** for LLM traffic: N client dialects (OpenAI Chat,
 OpenAI Responses, Anthropic Messages) × N provider backends (Bedrock, Anthropic, OpenAI, vLLM,

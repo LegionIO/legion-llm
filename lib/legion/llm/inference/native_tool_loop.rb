@@ -36,7 +36,7 @@ module Legion
 
         private
 
-        def execute_native_tool_loop # rubocop:disable Metrics/AbcSize
+        def execute_native_tool_loop
           messages = native_dispatch_messages.dup
           max_rounds = Legion::Settings[:llm][:tools][:max_rounds]
           round = 0
@@ -65,17 +65,7 @@ module Legion
               end
             end
             if tool_calls.empty?
-              result_text = result.text.to_s
-              result_thinking = if result.respond_to?(:thinking)
-                                  t = result.thinking
-                                  t.respond_to?(:content) ? t.content : t.to_s
-                                end
-              log.debug "[llm][native_tool_loop] action=exit_no_tool_calls round=#{round} " \
-                        "result_text_length=#{result_text.to_s.length} " \
-                        "result_text=#{result_text.to_s.inspect} " \
-                        "thinking_length=#{result_thinking.to_s.length} " \
-                        "thinking_preview=#{result_thinking.to_s[0, Legion::Settings[:llm][:tools][:thinking_log_chars]].inspect} " \
-                        "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
+              log_native_tool_loop_result(result, round, action: :exit_no_tool_calls)
               log.debug "[llm][executor] action=native_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
               return result
@@ -159,7 +149,7 @@ module Legion
           @native_tool_loop_round = nil
         end
 
-        def execute_native_streaming_tool_loop(&block) # rubocop:disable Metrics/AbcSize
+        def execute_native_streaming_tool_loop(&block)
           messages = native_dispatch_messages.dup
           max_rounds = Legion::Settings[:llm][:tools][:max_rounds]
           round = 0
@@ -188,17 +178,7 @@ module Legion
               end
             end
             if tool_calls.empty?
-              result_text = result.text.to_s
-              result_thinking = if result.respond_to?(:thinking)
-                                  t = result.thinking
-                                  t.respond_to?(:content) ? t.content : t.to_s
-                                end
-              log.debug "[llm][native_tool_loop] action=stream_exit_no_tool_calls round=#{round} " \
-                        "result_text_length=#{result_text.to_s.length} " \
-                        "result_text=#{result_text.to_s.inspect} " \
-                        "thinking_length=#{result_thinking.to_s.length} " \
-                        "thinking_preview=#{result_thinking.to_s[0, Legion::Settings[:llm][:tools][:thinking_log_chars]].inspect} " \
-                        "stop_reason=#{result.respond_to?(:stop_reason) ? result.stop_reason : 'n/a'}"
+              log_native_tool_loop_result(result, round, action: :stream_exit_no_tool_calls)
               log.debug "[llm][executor] action=native_streaming_tool_loop.complete rounds=#{round} reason=no_tool_calls"
               @last_tool_loop_messages = messages
               return result
@@ -283,6 +263,18 @@ module Legion
           log.warn "[llm][native_tool_loop] action=cap_per_turn round=#{round} " \
                    "total=#{tool_calls.size} limit=#{max_per_turn} deferred=#{tool_calls.size - max_per_turn}"
           [tool_calls.first(max_per_turn), tool_calls[max_per_turn..]]
+        end
+
+        def log_native_tool_loop_result(result, round, action:)
+          log.debug do
+            result_text = result.text.to_s
+            result_thinking = result.thinking&.content.to_s
+            "[llm][native_tool_loop] action=#{action} round=#{round} " \
+              "result_text_length=#{result_text.length} result_text=#{result_text.inspect} " \
+              "thinking_length=#{result_thinking.length} " \
+              "thinking_preview=#{result_thinking[0, Legion::Settings[:llm][:tools][:thinking_log_chars]].inspect} " \
+              "stop_reason=#{result.stop_reason}"
+          end
         end
 
         def deferred_tool_call_result(tool_call)

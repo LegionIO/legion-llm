@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.21] - 2026-11-19
+
+### Fixed
+- Build pipeline timing tables and native tool-loop response diagnostics only when DEBUG logging is enabled, retaining recorded timings and canonical responses in synchronous and streaming paths. Count registered tools through the registry's constant-time count API instead of copying its snapshot for discovery diagnostics ([#223](https://github.com/LegionIO/legion-llm/issues/223)).
+
 ## [0.16.20] - 2026-11-18
 
 ### Fixed
