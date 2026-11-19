@@ -4,17 +4,13 @@ require 'spec_helper'
 require 'legion/llm/scheduling'
 
 RSpec.describe Legion::LLM::Scheduling do
-  before do
-    Legion::Settings[:llm][:scheduling] = {}
-  end
-
   describe '.enabled?' do
     it 'returns false by default' do
       expect(described_class.enabled?).to be false
     end
 
     it 'returns true when enabled in settings' do
-      Legion::Settings[:llm][:scheduling] = { enabled: true }
+      Legion::Settings[:llm][:scheduling].merge!(enabled: true)
       expect(described_class.enabled?).to be true
     end
 
@@ -24,7 +20,7 @@ RSpec.describe Legion::LLM::Scheduling do
     end
 
     it 'returns false when explicitly disabled' do
-      Legion::Settings[:llm][:scheduling] = { enabled: false }
+      Legion::Settings[:llm][:scheduling].merge!(enabled: false)
       expect(described_class.enabled?).to be false
     end
   end
@@ -64,7 +60,7 @@ RSpec.describe Legion::LLM::Scheduling do
 
     context 'with custom peak_hours_utc setting' do
       it 'uses the configured range' do
-        Legion::Settings[:llm][:scheduling] = { enabled: true, peak_hours_utc: '9-17' }
+        Legion::Settings[:llm][:scheduling].merge!(enabled: true, peak_hours_utc: '9-17')
         frozen = Time.utc(2026, 3, 21, 12, 0, 0)
         allow(Time).to receive(:now).and_return(frozen)
         expect(described_class.peak_hours?).to be true
@@ -77,23 +73,19 @@ RSpec.describe Legion::LLM::Scheduling do
         expect(described_class.peak_hours?).to be true
       end
 
-      it 'falls back to default on invalid format' do
-        Legion::Settings[:llm][:scheduling] = { enabled: true, peak_hours_utc: 'invalid' }
-        frozen = Time.utc(2026, 3, 21, 16, 0, 0)
-        allow(Time).to receive(:now).and_return(frozen)
-        expect(described_class.peak_hours?).to be true
+      it 'rejects an invalid configured range' do
+        Legion::Settings[:llm][:scheduling][:peak_hours_utc] = 'invalid'
+        expect { described_class.peak_hours? }.to raise_error(ArgumentError, /peak_hours_utc/)
       end
     end
   end
 
   describe '.should_defer?' do
     before do
-      Legion::Settings[:llm][:scheduling] = {
-        enabled:         true,
-        peak_hours_utc:  '14-22',
-        defer_intents:   %w[batch background],
-        max_defer_hours: 8
-      }
+      Legion::Settings[:llm][:scheduling].merge!(enabled:         true,
+                                                 peak_hours_utc:  '14-22',
+                                                 defer_intents:   %w[batch background],
+                                                 max_defer_hours: 8)
     end
 
     context 'when during peak hours' do
@@ -119,7 +111,7 @@ RSpec.describe Legion::LLM::Scheduling do
       end
 
       it 'returns false when scheduling is disabled' do
-        Legion::Settings[:llm][:scheduling] = { enabled: false }
+        Legion::Settings[:llm][:scheduling].merge!(enabled: false)
         expect(described_class.should_defer?(intent: :batch)).to be false
       end
     end
@@ -137,7 +129,7 @@ RSpec.describe Legion::LLM::Scheduling do
 
     context 'with default settings (disabled)' do
       before do
-        Legion::Settings[:llm][:scheduling] = {}
+        Legion::Settings[:llm][:scheduling][:enabled] = false
       end
 
       it 'always returns false' do
@@ -149,11 +141,9 @@ RSpec.describe Legion::LLM::Scheduling do
 
     context 'with custom defer_intents from settings' do
       before do
-        Legion::Settings[:llm][:scheduling] = {
-          enabled:        true,
-          defer_intents:  %w[maintenance],
-          peak_hours_utc: '14-22'
-        }
+        Legion::Settings[:llm][:scheduling].merge!(enabled:        true,
+                                                   defer_intents:  %w[maintenance],
+                                                   peak_hours_utc: '14-22')
         frozen = Time.utc(2026, 3, 21, 16, 0, 0)
         allow(Time).to receive(:now).and_return(frozen)
       end
@@ -167,11 +157,9 @@ RSpec.describe Legion::LLM::Scheduling do
 
   describe '.next_off_peak' do
     before do
-      Legion::Settings[:llm][:scheduling] = {
-        enabled:         true,
-        peak_hours_utc:  '14-22',
-        max_defer_hours: 8
-      }
+      Legion::Settings[:llm][:scheduling].merge!(enabled:         true,
+                                                 peak_hours_utc:  '14-22',
+                                                 max_defer_hours: 8)
     end
 
     it 'returns a Time object' do
@@ -204,11 +192,9 @@ RSpec.describe Legion::LLM::Scheduling do
 
   describe '.status' do
     before do
-      Legion::Settings[:llm][:scheduling] = {
-        enabled:         true,
-        peak_hours_utc:  '14-22',
-        max_defer_hours: 6
-      }
+      Legion::Settings[:llm][:scheduling].merge!(enabled:         true,
+                                                 peak_hours_utc:  '14-22',
+                                                 max_defer_hours: 6)
     end
 
     it 'returns a hash with scheduling state' do
@@ -235,6 +221,7 @@ RSpec.describe Legion::LLM::Scheduling do
   end
   it 'uses the registered deferred intents when a partial configuration omits them' do
     Legion::Settings[:llm][:scheduling] = { enabled: true }
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
     allow(Time).to receive(:now).and_return(Time.utc(2026, 3, 21, 16))
     expect(described_class.should_defer?(intent: :background)).to be true
     expect(described_class.should_defer?(intent: :maintenance)).to be false

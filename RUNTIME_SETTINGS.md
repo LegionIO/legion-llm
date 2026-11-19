@@ -2,10 +2,13 @@
 
 All paths below are under `Legion::Settings[:llm]`. Defaults live in
 [`lib/legion/llm/settings.rb`](lib/legion/llm/settings.rb) and its existing
-`settings/` modules. Consumers inherit missing/nil keys from that owner. Explicit
-`false` and valid zero values are preserved. Newly configurable bounds reject
-invalid scalar values with `ArgumentError` identifying the key. Nested string keys
-are accepted by the runtime resolver.
+`settings/` modules. The settings framework merges missing defaults at boot;
+consumers read `Legion::Settings[:llm][:group][:key]` directly. Explicit `false`,
+zero and `nil` values are preserved by merging. Required values, types and bounds
+are checked through `Legion::Settings.validate!`; invalid configuration raises
+`Legion::Settings::ValidationError` with the affected key. There is no runtime
+settings resolver or second fallback tree. Routing uses its captured settings
+snapshot rather than rereading global configuration.
 
 | Settings group | Policy and units |
 | --- | --- |

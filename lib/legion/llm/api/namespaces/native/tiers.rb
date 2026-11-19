@@ -20,7 +20,7 @@ module Legion
             def self.tiers_tree
               TIERS_CACHE_LOCK.synchronize do
                 now = Time.now.to_i
-                if @tiers_cache_data.nil? || (now - (@tiers_cache_at || 0)) > Legion::LLM::Settings.resolve(:api, :tiers_cache_ttl)
+                if @tiers_cache_data.nil? || (now - (@tiers_cache_at || 0)) > Legion::Settings[:llm][:api][:tiers_cache_ttl]
                   @tiers_cache_data = Legion::LLM::API::Native::Tiers.build_tiers_tree
                   @tiers_cache_at   = now
                   log.debug('[llm][api][namespaces][tiers] action=cache_rebuilt')

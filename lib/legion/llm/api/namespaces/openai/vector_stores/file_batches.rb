@@ -40,7 +40,8 @@ module Legion
                 end
 
                 file_ids = body[:file_ids].map(&:to_s).uniq
-                limit = file_batch_limit
+                limit = Legion::Settings[:llm][:vector_store][:batch_max_files]
+                raise ArgumentError, 'llm.vector_store.batch_max_files must be a positive Integer' unless limit.is_a?(Integer) && limit.positive?
                 if file_ids.size > limit
                   return openai_error("file_ids exceeds the configured maximum of #{limit} unique files",
                                       type: 'invalid_request_error', code: 'file_batch_limit_exceeded', status_code: 400)
@@ -181,13 +182,6 @@ module Legion
               rescue StandardError => e
                 handle_exception(e, level: :error, operation: 'llm.api.vector_stores.batches.cancel')
                 openai_error(e.message, type: 'server_error', code: 'internal_error', status_code: 500)
-              end
-
-              def file_batch_limit
-                limit = Legion::Settings[:llm][:vector_store][:batch_max_files]
-                return limit if limit.is_a?(Integer) && limit.positive?
-
-                raise ArgumentError, 'llm.vector_store.batch_max_files must be a positive Integer'
               end
 
               def process_batch_files(_batch_id, store_id, file_ids, chunking_strategy)

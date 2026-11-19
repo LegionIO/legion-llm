@@ -17,7 +17,7 @@ module Legion
           # @param provider      [Symbol, nil]  provider (informational)
           # @return [Hash] the recorded entry
           def record(model:, input_tokens:, output_tokens:, provider: nil)
-            cost = Pricing.estimate(model_id: model, input_tokens: input_tokens, output_tokens: output_tokens)
+            cost = Legion::LLM::Metering::Pricing.estimate(model_id: model, input_tokens: input_tokens, output_tokens: output_tokens)
 
             entry = {
               model:         model,
@@ -64,7 +64,7 @@ module Legion
           # @param model [String] model identifier
           # @return [Hash] with :input and :output keys (per-1M-token USD)
           def pricing_for(model)
-            input, output = Pricing.resolve_price(model)
+            input, output = Legion::LLM::Metering::Pricing.resolve_price(model_id: model)
             { input: input, output: output }
           end
 

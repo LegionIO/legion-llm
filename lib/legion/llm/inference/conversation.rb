@@ -102,7 +102,7 @@ module Legion
             msg
           end
 
-          def read_metadata(conversation_id, tail_n: Legion::LLM::Settings.resolve(:conversation, :metadata_tail_messages))
+          def read_metadata(conversation_id, tail_n: Legion::Settings[:llm][:conversation][:metadata_tail_messages])
             raw = all_raw_messages(conversation_id)
             tail = raw.last(tail_n).select { |m| m[:role] == METADATA_ROLE }
             return nil if tail.empty?
@@ -243,7 +243,7 @@ module Legion
           end
 
           def evict_if_needed
-            limit = Legion::LLM::Settings.resolve(:conversation, :max_conversations)
+            limit = Legion::Settings[:llm][:conversation][:max_conversations]
             while conversations.size > limit
               oldest_id = conversations.min_by { |_, v| v[:lru_tick] }&.first
               break unless oldest_id

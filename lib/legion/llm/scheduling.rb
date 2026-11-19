@@ -9,7 +9,7 @@ module Legion
       class << self
         # Returns true when off-peak scheduling is enabled in settings.
         def enabled?
-          Legion::Settings.dig(:llm, :scheduling, :enabled) == true
+          Legion::Settings[:llm][:scheduling][:enabled] == true
         end
 
         # Determines whether a request should be deferred to off-peak hours.
@@ -70,31 +70,18 @@ module Legion
 
         private
 
-        def default_peak_range
-          start_hour, end_hour = Legion::LLM::Settings.scheduling_defaults.fetch(:peak_hours_utc).split('-').map(&:to_i)
-          (start_hour..end_hour)
-        end
-
         def peak_range
-          raw = Legion::Settings.dig(:llm, :scheduling, :peak_hours_utc)
-          return default_peak_range unless raw.is_a?(String) && raw.include?('-')
+          raw = Legion::Settings[:llm][:scheduling][:peak_hours_utc]
+          raise ArgumentError, 'llm.scheduling.peak_hours_utc must be an hour range such as 14-22' unless raw.is_a?(String) && raw.match?(/\A\d{1,2}-\d{1,2}\z/)
 
-          parts = raw.split('-')
-          return default_peak_range unless parts.size == 2
+          start_h, end_h = raw.split('-').map { |hour| Integer(hour, 10) }
+          raise ArgumentError, 'llm.scheduling.peak_hours_utc must be an ordered range within 0-23' unless start_h.between?(0, 23) && end_h.between?(start_h, 23)
 
-          start_h = Integer(parts[0], 10)
-          end_h   = Integer(parts[1], 10)
           (start_h..end_h)
-        rescue ArgumentError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.scheduling.peak_range')
-          default_peak_range
         end
 
         def defer_intents
-          raw = Legion::Settings.dig(:llm, :scheduling, :defer_intents)
-          return Legion::LLM::Settings.scheduling_defaults.fetch(:defer_intents).map(&:to_sym) unless raw.is_a?(Array)
-
-          raw.map { |i| i.to_s.to_sym }
+          Legion::Settings[:llm][:scheduling][:defer_intents].map(&:to_sym)
         end
 
         def eligible_for_deferral?(intent)

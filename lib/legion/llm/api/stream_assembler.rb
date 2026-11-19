@@ -92,8 +92,8 @@ module Legion
                                   else
                                     emit_thinking_blocks
                                   end
-          @tool_call_buffering = (tool_call_buffering || Legion::LLM::Settings.resolve(:streaming, :tool_call_buffering)).to_sym
-          @keep_alive_interval_ms = (keep_alive_interval_ms || Legion::LLM::Settings.resolve(:streaming, :keep_alive_interval_ms)).to_i
+          @tool_call_buffering = (tool_call_buffering || Legion::Settings[:llm][:streaming][:tool_call_buffering]).to_sym
+          @keep_alive_interval_ms = (keep_alive_interval_ms || Legion::Settings[:llm][:streaming][:keep_alive_interval_ms]).to_i
 
           @phase = :before_first_byte
           @closed = false

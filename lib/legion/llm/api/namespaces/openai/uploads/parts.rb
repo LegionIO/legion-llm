@@ -37,8 +37,8 @@ module Legion
 
                   raw_data = Parts.extract_part_data(request, params)
 
-                  max_part_size_bytes = Legion::LLM::Settings.resolve(:files, :max_part_size_bytes)
-                  max_total_upload_bytes = Legion::LLM::Settings.resolve(:files, :max_total_upload_bytes)
+                  max_part_size_bytes = Legion::Settings[:llm][:files][:max_part_size_bytes]
+                  max_total_upload_bytes = Legion::Settings[:llm][:files][:max_total_upload_bytes]
                   if raw_data.bytesize > max_part_size_bytes
                     halt 413, { 'Content-Type' => 'application/json' },
                          Legion::JSON.dump({ error: { message: "Part size #{raw_data.bytesize} bytes exceeds maximum #{max_part_size_bytes} bytes.",

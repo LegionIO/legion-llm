@@ -11,19 +11,19 @@ module Legion
         module Chat
           extend Legion::Logging::Helper
 
-          POOL_MUTEX = Mutex.new
+          @pool_mutex = Mutex.new
 
           def self.async_pool
-            POOL_MUTEX.synchronize do
+            @pool_mutex.synchronize do
               @async_pool ||= Concurrent::FixedThreadPool.new(
-                Legion::LLM::Settings.resolve(:api, :native_chat_pool_size),
+                Legion::Settings[:llm][:api][:native_chat_pool_size],
                 fallback_policy: :caller_runs
               )
             end
           end
 
           def self.shutdown_pool
-            pool = POOL_MUTEX.synchronize do
+            pool = @pool_mutex.synchronize do
               current = @async_pool
               @async_pool = nil
               current
@@ -31,7 +31,7 @@ module Legion
             return unless pool
 
             pool.shutdown
-            pool.wait_for_termination(Legion::LLM::Settings.resolve(:api, :native_chat_shutdown_timeout))
+            pool.wait_for_termination(Legion::Settings[:llm][:api][:native_chat_shutdown_timeout])
           end
 
           at_exit { shutdown_pool }
@@ -77,7 +77,7 @@ module Legion
                 rc  = Legion::LLM::Cache::Response
                 rc.init_request(request_id)
 
-                Chat.async_pool.post do
+                Legion::LLM::API::Native::Chat.async_pool.post do
                   session  = llm.chat_direct(model: model, provider: provider)
                   response = session.ask(message)
                   rc.complete(

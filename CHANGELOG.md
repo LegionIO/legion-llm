@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.16.28] - 2026-11-19
+
+### Fixed
+- Remove the custom settings resolver and read wrappers introduced during #229 cleanup. Core consumers read the boot-merged `Legion::Settings[:llm]` tree directly; routing continues to use its immutable request snapshot. Register type and range validation through the settings framework, preserving explicit false, zero and nil values instead of silently replacing invalid configuration. Fixes #229.
+- Preserve queued tool audits and metering data when resource limits are invalid. Keep mutable executor locks in runtime state, propagate programming errors, and report background admission exceptions at WARN.
+- Exercise the real settings reset, default registration and validation lifecycle in RSpec instead of overriding the dependency's reset method. Correct partial-configuration fixtures without weakening behavior assertions, and drain asynchronous capture/curation before assertions and fixture teardown.
+
 ## [0.16.27] - 2026-11-19
 
 ### Fixed

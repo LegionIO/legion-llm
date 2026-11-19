@@ -11,8 +11,8 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
-          def step_knowledge_capture(async: true)
-            unless knowledge_capture_enabled?
+          def step_knowledge_capture(async: true, **)
+            unless Legion::Settings[:llm][:knowledge_capture][:enabled] == true
               log_step_debug(:knowledge_capture, :skipped, reason: :disabled)
               return
             end
@@ -20,7 +20,7 @@ module Legion
             response = current_response
             request = @request
             enrichments = @enrichments
-            writeback_enabled = knowledge_capture_writeback_enabled? && !defined?(Legion::Extensions::Apollo::Helpers::Writeback).nil?
+            writeback_enabled = Legion::Settings[:llm][:knowledge_capture][:writeback_enabled] == true && !defined?(Legion::Extensions::Apollo::Helpers::Writeback).nil?
             local_enabled = local_capture_enabled?
             unless writeback_enabled || local_enabled
               log_step_debug(:knowledge_capture, :skipped, reason: :no_targets)
@@ -52,7 +52,7 @@ module Legion
               handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.async')
             end
 
-            accepted = async ? Background.post(workload: :knowledge_capture, &capture) : capture.call
+            accepted = async ? Legion::LLM::Inference::Background.post(workload: :knowledge_capture, &capture) : capture.call
             if async && !accepted
               @timeline.record(category: :knowledge, key: 'knowledge:capture', direction: :outbound,
                                detail: 'optional knowledge capture skipped: background executor unavailable',
@@ -73,28 +73,12 @@ module Legion
           private
 
           def knowledge_capture_requested?
-            knowledge_capture_enabled? &&
-              ((knowledge_capture_writeback_enabled? && defined?(Legion::Extensions::Apollo::Helpers::Writeback)) || local_capture_enabled?)
-          end
-
-          def knowledge_capture_enabled?
-            knowledge_capture_setting(:enabled) == true
-          end
-
-          def knowledge_capture_writeback_enabled?
-            knowledge_capture_setting(:writeback_enabled) == true
-          end
-
-          def knowledge_capture_local_ingest_enabled?
-            knowledge_capture_setting(:local_ingest_enabled) == true
-          end
-
-          def knowledge_capture_setting(key)
-            Legion::LLM::Settings.resolve(:knowledge_capture, key)
+            Legion::Settings[:llm][:knowledge_capture][:enabled] == true &&
+              ((Legion::Settings[:llm][:knowledge_capture][:writeback_enabled] == true && defined?(Legion::Extensions::Apollo::Helpers::Writeback)) || local_capture_enabled?)
           end
 
           def local_capture_enabled?
-            return false unless knowledge_capture_local_ingest_enabled?
+            return false unless Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] == true
 
             defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
           rescue StandardError => e
@@ -114,7 +98,7 @@ module Legion
               return
             end
 
-            content = content[0, knowledge_capture_setting(:max_content_chars)]
+            content = content[0, Legion::Settings[:llm][:knowledge_capture][:max_content_chars]]
 
             model = response.routing[:model].to_s
             tags  = ['llm_response', model].reject(&:empty?)
@@ -124,7 +108,7 @@ module Legion
               content:        content,
               tags:           tags,
               source_channel: 'llm_pipeline',
-              confidence:     knowledge_capture_setting(:confidence)
+              confidence:     Legion::Settings[:llm][:knowledge_capture][:confidence]
             )
           rescue StandardError => e
             @warnings << "local_knowledge_capture error: #{e.message}"

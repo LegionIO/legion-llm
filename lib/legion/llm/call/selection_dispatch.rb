@@ -81,7 +81,7 @@ module Legion
             Result.success(value: value)
           rescue StandardError => e
             log.warn("[llm][selection_dispatch] action=dispatch_failed class=#{e.class.name} " \
-                     "message=#{e.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :dispatch_preview_chars)]}")
+                     "message=#{e.message.to_s[0, Legion::Settings[:llm][:logging][:dispatch_preview_chars]]}")
             raise consumer_error if consumer_error
             raise if daemon_fault?(e)
 
@@ -107,7 +107,7 @@ module Legion
                   "normalize_dispatch_error returned #{outcome.class}, expected ProviderOutcome"
           end
           log.warn("[llm][selection_dispatch] action=dispatch_normalized kind=#{outcome.kind} " \
-                   "reason=#{outcome.reason.to_s[0, Legion::LLM::Settings.resolve(:logging, :dispatch_preview_chars)]}")
+                   "reason=#{outcome.reason.to_s[0, Legion::Settings[:llm][:logging][:dispatch_preview_chars]]}")
           outcome
         rescue StandardError => e
           # Log the ORIGINAL dispatch error too — a normalizer that raises must never
@@ -116,9 +116,9 @@ module Legion
           handle_exception(e, level: :warn, operation: 'llm.call.selection_dispatch.normalize_error',
                               handled: false, lane_id: nil,
                               original_error_class: error.class.name,
-                              original_error_message: error.message.to_s.dup.force_encoding(::Encoding::UTF_8).scrub('?')[0, Legion::LLM::Settings.resolve(:logging, :dispatch_error_chars)])
+                              original_error_message: error.message.to_s.dup.force_encoding(::Encoding::UTF_8).scrub('?')[0, Legion::Settings[:llm][:logging][:dispatch_error_chars]])
           log.warn("[llm][selection_dispatch] action=normalizer_failed class=#{e.class.name} " \
-                   "message=#{e.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :dispatch_preview_chars)]}")
+                   "message=#{e.message.to_s[0, Legion::Settings[:llm][:logging][:dispatch_preview_chars]]}")
           raise
         end
         private_class_method :normalize

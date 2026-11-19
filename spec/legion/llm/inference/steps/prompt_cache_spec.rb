@@ -65,15 +65,14 @@ RSpec.describe Legion::LLM::Inference::Steps::PromptCache do
         expect(result.last[:cache_control]).to eq({ type: 'persistent' })
       end
 
-      it 'honors string-keyed prompt caching settings' do
-        Legion::Settings.set_prop(:llm, {
-                                    'prompt_caching' => {
-                                      'enabled'             => true,
-                                      'min_tokens'          => 1024,
-                                      'scope'               => 'persistent',
-                                      'cache_system_prompt' => true
-                                    }
-                                  })
+      it 'honors prompt caching settings loaded from JSON' do
+        Legion::Settings.set_prop(:llm, Legion::JSON.load('{
+          "prompt_caching": {
+            "enabled": true, "min_tokens": 1024,
+            "scope": "persistent", "cache_system_prompt": true
+          }
+        }'))
+        Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
         blocks = [{ type: :text, content: long_content }]
         result = mod.apply_cache_control(blocks)
         expect(result.last[:cache_control]).to eq({ type: 'persistent' })
@@ -257,6 +256,7 @@ RSpec.describe Legion::LLM::Inference::Steps::PromptCache do
   end
   it 'inherits registered enablement with partial settings and applies the configured threshold' do
     Legion::Settings[:llm][:prompt_caching] = { min_tokens: 2 }
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
     blocks = [{ type: :text, content: 'long enough' }]
     expect(mod.apply_cache_control(blocks).last[:cache_control]).to eq(type: 'ephemeral')
     Legion::Settings[:llm][:prompt_caching][:enabled] = false

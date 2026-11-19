@@ -396,13 +396,13 @@ module Legion
 
           def estimate_judge_confidence(text)
             normalized = text.to_s.downcase
-            return Legion::LLM::Settings.resolve(:debate, :judge_confidence, :uncertain) if normalized.match?(/\b(low confidence|uncertain|unclear|weak evidence)\b/)
-            return Legion::LLM::Settings.resolve(:debate, :judge_confidence, :decisive) if normalized.match?(/\b(high confidence|stronger|clearly|definitive)\b/)
+            return Legion::Settings[:llm][:debate][:judge_confidence][:uncertain] if normalized.match?(/\b(low confidence|uncertain|unclear|weak evidence)\b/)
+            return Legion::Settings[:llm][:debate][:judge_confidence][:decisive] if normalized.match?(/\b(high confidence|stronger|clearly|definitive)\b/)
 
-            Legion::LLM::Settings.resolve(:debate, :judge_confidence, :default)
+            Legion::Settings[:llm][:debate][:judge_confidence][:default]
           end
 
-          def truncate_for_metadata(text, limit = Legion::LLM::Settings.resolve(:debate, :summary_max_chars))
+          def truncate_for_metadata(text, limit = Legion::Settings[:llm][:debate][:summary_max_chars])
             return nil if text.nil?
             return text if text.length <= limit
 

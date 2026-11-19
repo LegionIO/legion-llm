@@ -12,32 +12,37 @@ require 'legion/llm/api/native/helpers'
 require 'legion/llm/vector_store/storage'
 
 RSpec.describe 'Runtime settings ownership' do
-  let(:settings) { Legion::Settings[:llm] }
+  def settings
+    Legion::Settings[:llm]
+  end
 
   describe Legion::LLM::Settings do
-    it 'inherits missing and nil branches without losing explicit false or zero' do
-      settings[:knowledge_capture] = nil
-      expect(described_class.resolve(:knowledge_capture, :enabled)).to be false
-      settings[:prompt_caching] = { 'enabled' => false }
-      expect(described_class.resolve(:prompt_caching, :enabled)).to be false
-      settings[:shadow] = { max_history: 0 }
-      expect(described_class.resolve(:shadow, :max_history)).to eq(0)
-      expect(described_class.resolve(:shadow, :sample_rate)).to eq(0.1)
+    it 'merges missing defaults at registration while preserving explicit false and zero' do
+      Legion::Settings.reset!
+      Legion::Settings.set_prop(:llm, { prompt_caching: { enabled: false }, shadow: { max_history: 0 } })
+      described_class.register_defaults!
+      expect(settings[:knowledge_capture][:enabled]).to be false
+      expect(settings[:prompt_caching][:enabled]).to be false
+      expect(settings[:shadow][:max_history]).to eq(0)
+      expect(settings[:shadow][:sample_rate]).to eq(0.1)
+      expect { Legion::Settings.validate! }.not_to raise_error
     end
 
-    it 'does not cache a value across settings replacement' do
-      settings[:daemon] = { read_timeout: 7 }
-      expect(described_class.resolve(:daemon, :read_timeout)).to eq(7)
-      settings[:daemon] = { read_timeout: 11 }
-      expect(described_class.resolve(:daemon, :read_timeout)).to eq(11)
+    it 'preserves explicit nil and rejects it during framework validation' do
+      settings[:daemon][:read_timeout] = nil
+      described_class.register_defaults!
+      expect(settings[:daemon][:read_timeout]).to be_nil
+      expect { Legion::Settings.validate! }.to raise_error(Legion::Settings::ValidationError, /daemon.read_timeout/)
     end
 
-    it 'rejects dangerous chunk, repetition, timeout, retention and path values' do
+    it 'rejects dangerous chunk, repetition, timeout, retention and path values during framework validation' do
       [[:embedding, :chunk_target_tokens, 0], [:quality, :repetition_min_chars, 0],
        [:daemon, :read_timeout, Float::INFINITY], [:shadow, :max_history, -1],
        [:files, :storage_path, ''], [:knowledge_capture, :enabled, 'true']].each do |group, key, bad|
+        previous = settings[group][key]
         settings[group][key] = bad
-        expect { described_class.resolve(group, key) }.to raise_error(ArgumentError, /llm\.#{group}\.#{key}/)
+        expect { Legion::Settings.validate! }.to raise_error(Legion::Settings::ValidationError, /#{group}\.#{key}/)
+        settings[group][key] = previous
       end
     end
   end
@@ -68,12 +73,12 @@ RSpec.describe 'Runtime settings ownership' do
       settings[:daemon].merge!(url: 'http://daemon.test', health_cache_ttl: 2)
       client.reset!
       allow(client).to receive(:check_health).and_return(true)
-      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(10)
+      allow(::Process).to receive(:clock_gettime).with(::Process::CLOCK_MONOTONIC).and_return(10)
       expect(client.available?).to be true
-      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(11)
+      allow(::Process).to receive(:clock_gettime).with(::Process::CLOCK_MONOTONIC).and_return(11)
       expect(client.available?).to be true
       expect(client).to have_received(:check_health).once
-      allow(Process).to receive(:clock_gettime).with(Process::CLOCK_MONOTONIC).and_return(13)
+      allow(::Process).to receive(:clock_gettime).with(::Process::CLOCK_MONOTONIC).and_return(13)
       expect(client.available?).to be true
       expect(client).to have_received(:check_health).twice
     ensure
@@ -104,6 +109,7 @@ RSpec.describe 'Runtime settings ownership' do
   describe 'curation and compression' do
     it 'uses the registered tool-result default when a partial curation tree omits it' do
       settings[:context_curation] = { enabled: true }
+      Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
       curator = Legion::LLM::Context::Curator.new(conversation_id: 'settings-test')
       message = { role: :tool, content: 'x' * 3000 }
       expect(curator.distill_tool_result(message)).to equal(message)
@@ -177,6 +183,7 @@ RSpec.describe 'Runtime settings ownership' do
     it 'merges partial penalty overrides with registered penalties' do
       settings[:quality][:too_short] = true
       settings[:confidence][:heuristic_weights] = { empty: -0.2 }
+      Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
       response = Struct.new(:content).new('short')
       expect(Legion::LLM::Quality::Confidence::Scorer.score(response).score).to eq(0.7)
     end
@@ -198,6 +205,7 @@ RSpec.describe 'Runtime settings ownership' do
   describe 'discovery and native helpers' do
     it 'leaves discovery disabled when its settings are missing' do
       settings[:skills] = {}
+      Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
       expect(Legion::LLM::Skills::ExternalDiscovery).not_to receive(:claude_directories)
       expect(Legion::LLM::Skills::ExternalDiscovery).not_to receive(:codex_directories)
       expect(Legion::LLM::Skills::ExternalDiscovery.discover).to eq([])
@@ -243,10 +251,12 @@ RSpec.describe 'Runtime settings ownership' do
     expect(compressor.auto_compact(messages, target_tokens: 1, preserve_recent: 1)).to include(hash_including(content: 'older preserved'))
   end
 
-  it 'inherits the registered escalation quality threshold instead of a shadow minimum' do
+  it 'registers the escalation quality threshold without overriding operator configuration' do
     settings[:routing][:escalation] = {}
-    expect(Legion::LLM::Inference.escalation_quality_threshold).to eq(0)
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
+    expect(settings[:routing][:escalation][:quality_threshold]).to eq(0)
     settings[:routing][:escalation][:quality_threshold] = 23
-    expect(Legion::LLM::Inference.escalation_quality_threshold).to eq(23)
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
+    expect(settings[:routing][:escalation][:quality_threshold]).to eq(23)
   end
 end

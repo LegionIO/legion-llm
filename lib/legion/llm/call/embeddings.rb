@@ -276,7 +276,7 @@ module Legion
           end
 
           def cache_ttl
-            ttl = Legion::LLM::Settings.resolve(:embedding, :cache, :ttl)
+            ttl = Legion::Settings[:llm][:embedding][:cache][:ttl]
             raise ArgumentError, 'embedding.cache.ttl must be a positive number' unless ttl.is_a?(Numeric) && ttl.real? && ttl.finite? && ttl.positive?
 
             ttl.ceil
@@ -301,7 +301,7 @@ module Legion
           end
 
           def chunk_char_budget(attempt_context:, **)
-            target_tokens = Legion::LLM::Settings.resolve(:embedding, :chunk_target_tokens)
+            target_tokens = Legion::Settings[:llm][:embedding][:chunk_target_tokens]
             evidence = attempt_context.lane.context_evidence
             context_tokens = evidence&.known? ? evidence.value.to_i : target_tokens
             tokens = [context_tokens, target_tokens].min
@@ -341,7 +341,7 @@ module Legion
           def chunk_boundary(slice:, max_chars:, **)
             candidates = [slice.rindex("\n\n"), slice.rindex("\n"), slice.rindex('. '), slice.rindex(' ')]
             boundary = candidates.compact.max
-            return max_chars unless boundary && boundary >= (max_chars * Legion::LLM::Settings.resolve(:embedding, :chunk_boundary_ratio))
+            return max_chars unless boundary && boundary >= (max_chars * Legion::Settings[:llm][:embedding][:chunk_boundary_ratio])
 
             boundary + 1
           end

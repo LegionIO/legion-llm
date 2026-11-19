@@ -37,19 +37,19 @@ RSpec.describe Legion::LLM::Metering::Pricing do
 
   describe '.resolve_price' do
     it 'returns exact match' do
-      expect(described_class.resolve_price('claude-opus-4-6')).to eq([15.0, 75.0])
+      expect(described_class.resolve_price(model_id: 'claude-opus-4-6')).to eq([15.0, 75.0])
     end
 
     it 'normalizes to lowercase' do
-      expect(described_class.resolve_price('Claude-Opus-4-6')).to eq([15.0, 75.0])
+      expect(described_class.resolve_price(model_id: 'Claude-Opus-4-6')).to eq([15.0, 75.0])
     end
 
     it 'matches with fuzzy search' do
-      expect(described_class.resolve_price('us.anthropic.claude-opus-4-6-v1')).to eq([15.0, 75.0])
+      expect(described_class.resolve_price(model_id: 'us.anthropic.claude-opus-4-6-v1')).to eq([15.0, 75.0])
     end
 
     it 'returns default for completely unknown model' do
-      expect(described_class.resolve_price('my-custom-model')).to eq([1.0, 3.0])
+      expect(described_class.resolve_price(model_id: 'my-custom-model')).to eq([1.0, 3.0])
     end
   end
 
@@ -97,19 +97,19 @@ RSpec.describe Legion::LLM::Metering::Pricing do
     end
 
     it 'matches the most specific decorated model name and does not guess from empty identifiers' do
-      expect(described_class.resolve_price('gpt-4o-mini-2026-01-01')).to eq([0.15, 0.60])
-      expect(described_class.resolve_price('')).to eq([1.0, 3.0])
+      expect(described_class.resolve_price(model_id: 'gpt-4o-mini-2026-01-01')).to eq([0.15, 0.60])
+      expect(described_class.resolve_price(model_id: '')).to eq([1.0, 3.0])
     end
 
-    it 'accepts zero rates and string-key configuration' do
-      Legion::Settings[:llm][:pricing] = { 'free-model' => { 'input' => 0, 'output' => 0 } }
+    it 'accepts zero rates from JSON configuration' do
+      Legion::Settings[:llm][:pricing] = Legion::JSON.load('{"free-model":{"input":0,"output":0}}')
       expect(described_class.estimate(model_id: 'free-model', input_tokens: 1000, output_tokens: 1000)).to eq(0.0)
     end
 
     [nil, {}, { input: -1, output: 3 }, { input: Float::INFINITY, output: 3 }, { input: '1', output: 3 }].each do |price|
       it "rejects invalid configured rates #{price.inspect} instead of inventing a price" do
         Legion::Settings[:llm][:pricing] = { 'broken-model' => price }
-        expect { described_class.resolve_price('broken-model') }.to raise_error(ArgumentError, /pricing/)
+        expect { described_class.resolve_price(model_id: 'broken-model') }.to raise_error(ArgumentError, /pricing/)
       end
     end
   end

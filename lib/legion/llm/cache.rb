@@ -62,7 +62,7 @@ module Legion
       end
 
       # Stores a response in the cache with the given TTL.
-      def set(cache_key, response, ttl: Legion::LLM::Settings.resolve(:prompt_caching, :response_cache, :ttl_seconds))
+      def set(cache_key, response, ttl: Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds])
         return false unless available?
 
         cache_backend_set(cache_key, Legion::JSON.dump(response), ttl: ttl)

@@ -11,11 +11,11 @@ module Legion
       class Background
         include Legion::Logging::Helper
 
-        SHARED_MUTEX = Mutex.new
+        @shared_mutex = Mutex.new
 
         class << self
           def shared
-            SHARED_MUTEX.synchronize { @shared ||= new }
+            @shared_mutex.synchronize { @shared ||= new }
           end
 
           def post(...)
@@ -23,7 +23,7 @@ module Legion
           end
 
           def stats
-            SHARED_MUTEX.synchronize do
+            @shared_mutex.synchronize do
               @shared ? @shared.stats : { state: :idle, queue_length: 0 }
             end
           end
@@ -33,7 +33,7 @@ module Legion
           end
 
           def start
-            SHARED_MUTEX.synchronize do
+            @shared_mutex.synchronize do
               return if @shared.nil? || @shared.running?
 
               raise 'inference background jobs are still draining' unless @shared.terminated?
@@ -44,9 +44,15 @@ module Legion
         end
 
         def initialize
-          @workers = Settings.resolve(:background, :workers)
-          @capacity = Settings.resolve(:background, :max_queue)
-          @shutdown_timeout = Settings.resolve(:background, :shutdown_timeout)
+          @workers = Legion::Settings[:llm][:background][:workers]
+          @capacity = Legion::Settings[:llm][:background][:max_queue]
+          @shutdown_timeout = Legion::Settings[:llm][:background][:shutdown_timeout]
+          raise ArgumentError, 'llm.background.workers must be a positive integer' unless @workers.is_a?(Integer) && @workers.positive?
+          raise ArgumentError, 'llm.background.max_queue must be a positive integer' unless @capacity.is_a?(Integer) && @capacity.positive?
+          unless @shutdown_timeout.is_a?(Numeric) && @shutdown_timeout.real? && @shutdown_timeout.finite? && @shutdown_timeout >= 0
+            raise ArgumentError, 'llm.background.shutdown_timeout must be finite and nonnegative'
+          end
+
           @pool = Concurrent::FixedThreadPool.new(@workers, max_queue: @capacity, fallback_policy: :abort, auto_terminate: false)
           @mutex = Mutex.new
           @keyed = {}
@@ -57,7 +63,7 @@ module Legion
           @stopping = false
         end
 
-        def post(workload:, key: nil, &task)
+        def post(workload:, key: nil, **, &task)
           raise ArgumentError, 'background work requires a block' unless task
 
           @mutex.synchronize do
@@ -79,7 +85,7 @@ module Legion
               @admitted += 1
             rescue Concurrent::RejectedExecutionError => e
               @keyed.delete(identity) if identity
-              handle_exception(e, level: :debug, operation: 'llm.background.admission', workload: workload)
+              handle_exception(e, level: :warn, operation: 'llm.background.admission', workload: workload)
               return reject(workload, :capacity)
             end
             true
@@ -139,6 +145,8 @@ module Legion
             pending
           end
           task.call
+        rescue NotImplementedError, NoMethodError, ArgumentError, TypeError
+          raise
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.background.execute', workload: job[:workload])
         ensure
@@ -155,14 +163,14 @@ module Legion
         end
 
         def dispatch_deferred
-          until @deferred.empty?
+          @deferred.size.times do
             job = @deferred.first
             begin
               enqueue(job)
             rescue Concurrent::RejectedExecutionError => e
               # Bounded pending keys remain recoverable; the next queued job
               # starts dispatching them as soon as a native queue slot opens.
-              handle_exception(e, level: :debug, operation: 'llm.background.defer', workload: job[:workload])
+              handle_exception(e, level: :warn, operation: 'llm.background.defer', workload: job[:workload])
               break
             end
             @deferred.shift

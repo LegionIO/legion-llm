@@ -58,7 +58,7 @@ module Legion
                          "lane=#{lane.tier}:#{lane.provider_family}:#{lane.instance_id}:#{lane_type_for(lane.operation)}:#{lane.model} " \
                          "provider=#{@resolved_provider} " \
                          "instance=#{@resolved_instance} model=#{@resolved_model} " \
-                         "outcome_kind=#{result.outcome.kind} outcome_reason=#{result.outcome.reason.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]} " \
+                         "outcome_kind=#{result.outcome.kind} outcome_reason=#{result.outcome.reason.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]} " \
                          "disposition=#{action.disposition}")
               end
               return if action.disposition == :success
@@ -82,7 +82,7 @@ module Legion
           rescue Legion::Extensions::Llm::Inventory::Errors::StaleCallableError,
                  Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
             log.warn("[llm][executor] action=ssot_v3_stale_callable class=#{e.class.name} " \
-                     "message=#{e.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]}")
+                     "message=#{e.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]}")
             Legion::LLM::Call::SelectionDispatch::Result.failure(
               outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
                 kind: :instance_unavailable, reason: e.class.name
@@ -97,7 +97,7 @@ module Legion
             outcome = e.respond_to?(:outcome) ? e.outcome : nil
             if outcome.nil?
               log.warn("[llm][executor] action=ssot_v3_unnormalized_error class=#{e.class.name} " \
-                       "message=#{e.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]}")
+                       "message=#{e.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]}")
             end
             outcome ||= Legion::Extensions::Llm::Routing::ProviderOutcome.new(
               kind: :provider_error, reason: e.class.name.to_s
@@ -133,7 +133,7 @@ module Legion
               rescue Legion::Extensions::Llm::Inventory::Errors::StaleCallableError,
                      Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError => e
                 log.warn('[llm][executor] action=ssot_v3_stream_preflight_stale_callable ' \
-                         "class=#{e.class.name} message=#{e.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]}")
+                         "class=#{e.class.name} message=#{e.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]}")
                 @router.classify(
                   dispatch_result: Legion::LLM::Call::SelectionDispatch::Result.failure(
                     outcome: Legion::Extensions::Llm::Routing::ProviderOutcome.new(
@@ -230,7 +230,7 @@ module Legion
             outcome = if error.is_a?(Legion::Extensions::Llm::Inventory::Errors::StaleCallableError) ||
                          error.is_a?(Legion::Extensions::Llm::Inventory::Errors::CallableDisposedError)
                         log.warn("[llm][executor] action=ssot_v3_stream_stale_callable class=#{error.class.name} " \
-                                 "message=#{error.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]}")
+                                 "message=#{error.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]}")
                         Legion::Extensions::Llm::Routing::ProviderOutcome.new(
                           kind: :instance_unavailable, reason: error.class.name
                         )
@@ -243,7 +243,7 @@ module Legion
             )
             if action.disposition == :terminal
               log.warn("[llm][executor] action=ssot_v3_stream_terminal class=#{error.class.name} " \
-                       "message=#{error.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]} outcome_kind=#{outcome.kind}")
+                       "message=#{error.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]} outcome_kind=#{outcome.kind}")
             end
             raise error if action.disposition == :terminal
 
@@ -258,8 +258,8 @@ module Legion
 
             nxt = session.next_attempt
             if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
-              log.warn("[llm][executor] action=ssot_v3_stream_exhausted kind=#{nxt.kind} reason=#{nxt.reason.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]} " \
-                       "class=#{error.class.name} message=#{error.message.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]}")
+              log.warn("[llm][executor] action=ssot_v3_stream_exhausted kind=#{nxt.kind} reason=#{nxt.reason.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]} " \
+                       "class=#{error.class.name} message=#{error.message.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]}")
             end
             raise error if nxt.is_a?(Legion::Extensions::Llm::Routing::Rejection)
 
@@ -270,7 +270,7 @@ module Legion
               lane_type_for(next_lane.operation), next_lane.model
             ].join(':')
             log.warn "[llm][executor] action=ssot_v3_stream_failover from_kind=#{outcome.kind} " \
-                     "outcome_reason=#{outcome.reason.to_s[0, Legion::LLM::Settings.resolve(:logging, :escalation_preview_chars)]} to_lane=#{next_identity}"
+                     "outcome_reason=#{outcome.reason.to_s[0, Legion::Settings[:llm][:logging][:escalation_preview_chars]]} to_lane=#{next_identity}"
             nxt
           end
 

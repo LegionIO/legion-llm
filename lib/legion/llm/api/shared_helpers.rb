@@ -417,7 +417,7 @@ module Legion
             done_only += 1
           end
 
-          limit = Legion::LLM::Settings.resolve(:logging, :tool_name_limit)
+          limit = Legion::Settings[:llm][:logging][:tool_name_limit]
           names = tool_calls.map { |tc| openai_tool_call_name(tc) }.compact
           names_str = names.first(limit).join(',') + (names.size > limit ? ",+#{names.size - limit}more" : '')
           log.info(

@@ -198,7 +198,7 @@ module Legion
               # ── Storage directory ───────────────────────────────────────────
 
               def files_storage_path
-                base = ::File.expand_path(Legion::LLM::Settings.resolve(:files, :storage_path))
+                base = ::File.expand_path(Legion::Settings[:llm][:files][:storage_path])
                 ::FileUtils.mkdir_p(base)
                 base
               end

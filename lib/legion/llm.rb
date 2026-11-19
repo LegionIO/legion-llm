@@ -96,7 +96,7 @@ module Legion
     class << self
       def start
         log.debug '[llm] start.enter'
-        Inference::Background.start
+        Legion::LLM::Inference::Background.start
         Call::Providers.setup
         Config.set_defaults
         Hooks.install_defaults
@@ -123,7 +123,7 @@ module Legion
         Legion::Settings[:llm][:connected] = false
         @started = false
         # Accepted jobs may still need provider connections while draining.
-        return false unless Inference::Background.shutdown
+        return false unless Legion::LLM::Inference::Background.shutdown
 
         Call::Registry.disconnect_all!
         Call::Registry.reset!

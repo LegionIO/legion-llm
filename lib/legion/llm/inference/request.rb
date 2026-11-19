@@ -169,6 +169,8 @@ module Legion
           tokens.merge(max: Legion::Settings[:llm][:max_output_tokens])
         end
 
+        private_class_method :resolve_tokens
+
         # SSOT v3 §7.2 test helper: delegates to the production normalization
         # path, substituting only a deterministic RoutingContext. It cannot
         # bypass body policy, constraint derivation, or request freezing.

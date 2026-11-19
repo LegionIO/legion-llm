@@ -70,22 +70,6 @@ module Legion
         }
       end
 
-      # Resolve each use from the registered owner; false and valid zero values
-      # are explicit overrides. A missing/nil branch inherits the default. Bad
-      # scalar values are rejected rather than becoming unbounded resource limits.
-      def self.resolve(*path)
-        configured = path.reduce(Legion::Settings[:llm]) do |values, key|
-          values.is_a?(Hash) ? values.fetch(key) { values[key.to_s] } : nil
-        end
-        value = configured.nil? ? default_value(*path) : configured
-        validate_runtime_value!(path, value)
-        value
-      end
-
-      def self.default_value(*path)
-        path.reduce(default) { |values, key| values.fetch(key) }
-      end
-
       RUNTIME_CONSTRAINTS = {
         positive_integer:    %w[
           moderation.max_inputs moderation.max_output_tokens
@@ -153,25 +137,48 @@ module Legion
       }.flat_map { |kind, paths| paths.map { |path| [path, kind] } }.to_h.freeze
       private_constant :RUNTIME_CONSTRAINTS
 
-      def self.validate_runtime_value!(path, value)
-        kind = RUNTIME_CONSTRAINTS[path.join('.')]
-        return unless kind
+      # Framework validation consumes a supplied configuration snapshot. Runtime
+      # consumers read the boot-merged Legion::Settings tree directly.
+      def self.validate_runtime(settings:, errors:, **)
+        RUNTIME_CONSTRAINTS.each do |path, kind|
+          value = path.split('.').reduce(settings) { |node, key| node.is_a?(Hash) ? node[key.to_sym] : nil }
+          next if valid_runtime_value?(kind: kind, value: value)
 
-        numeric = value.is_a?(Numeric) && value.real? && value.finite?
-        valid = case kind
-                when :positive_integer then value.is_a?(Integer) && value.positive?
-                when :nonnegative_integer then value.is_a?(Integer) && value >= 0
-                when :positive_number then numeric && value.positive?
-                when :nonnegative_number then numeric && value >= 0
-                when :finite_number then numeric
-                when :positive_fraction then numeric && value.positive? && value <= 1
-                when :fraction then numeric && value.between?(0, 1)
-                when :boolean then [true, false].include?(value)
-                when :nonempty_string then value.is_a?(String) && !value.strip.empty?
-                end
-        raise ArgumentError, "llm.#{path.join('.')} must be #{kind}, got #{value.inspect}" unless valid
+          errors << { module: :llm, path: path, message: "must be #{kind}" }
+        end
       end
-      private_class_method :validate_runtime_value!
+
+      def self.valid_runtime_value?(kind:, value:)
+        numeric = value.is_a?(Numeric) && value.real? && value.finite?
+        case kind
+        when :positive_integer then value.is_a?(Integer) && value.positive?
+        when :nonnegative_integer then value.is_a?(Integer) && value >= 0
+        when :positive_number then numeric && value.positive?
+        when :nonnegative_number then numeric && value >= 0
+        when :finite_number then numeric
+        when :positive_fraction then numeric && value.positive? && value <= 1
+        when :fraction then numeric && value.between?(0, 1)
+        when :boolean then [true, false].include?(value)
+        when :nonempty_string then value.is_a?(String) && !value.strip.empty?
+        end
+      end
+      private_class_method :valid_runtime_value?
+
+      def self.runtime_schema
+        RUNTIME_CONSTRAINTS.each_with_object({}) do |(path, kind), schema|
+          keys = path.split('.').map(&:to_sym)
+          leaf = keys.pop
+          node = keys.reduce(schema) { |branch, key| branch[key] ||= {} }
+          type = case kind
+                 when :positive_integer, :nonnegative_integer then :integer
+                 when :boolean then :boolean
+                 when :nonempty_string then :string
+                 else :float
+                 end
+          node[leaf] = { type: type, required: true }
+        end
+      end
+      private_class_method :runtime_schema
 
       def self.background_defaults
         { workers: 4, max_queue: 64, shutdown_timeout: 5 }
@@ -180,6 +187,10 @@ module Legion
       def self.register_defaults!
         log.debug '[llm][settings] action=register_defaults'
         Legion::Settings.register_library(:llm, default)
+        Legion::Settings.define_schema(:llm, runtime_schema)
+        Legion::Settings.add_cross_validation do |settings, errors|
+          Legion::LLM::Settings.validate_runtime(settings: settings[:llm], errors: errors)
+        end
       end
 
       def self.validate!(settings)
@@ -821,9 +832,3 @@ module Legion
 end
 
 Legion::LLM::Settings.register_defaults!
-
-begin
-  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
-rescue StandardError => e
-  Legion::LLM::Settings.handle_exception(e, level: :fatal, operation: :merge_settings)
-end

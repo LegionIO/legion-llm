@@ -64,16 +64,14 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
   end
 
   before do
-    Legion::Settings[:llm][:debate] = {
-      enabled:                  false,
-      gaia_auto_trigger:        false,
-      default_rounds:           1,
-      max_rounds:               3,
-      advocate_model:           nil,
-      challenger_model:         nil,
-      judge_model:              nil,
-      model_selection_strategy: 'rotate'
-    }
+    Legion::Settings[:llm][:debate].merge!(enabled:                  false,
+                                           gaia_auto_trigger:        false,
+                                           default_rounds:           1,
+                                           max_rounds:               3,
+                                           advocate_model:           nil,
+                                           challenger_model:         nil,
+                                           judge_model:              nil,
+                                           model_selection_strategy: 'rotate')
     Legion::Settings[:extensions][:llm] = {
       anthropic: { enabled: true, default_model: 'claude-sonnet-4-6' },
       openai:    { enabled: true, default_model: 'gpt-4o' },
@@ -327,6 +325,7 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
                              judge_model:      'anthropic:claude-sonnet-4-5'
                            }
                          })
+      Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
       Legion::Settings[:extensions][:llm] = {
         anthropic: {
           enabled:       true,

@@ -14,7 +14,7 @@ module Legion
 
         class << self
           def enabled?
-            Legion::LLM::Settings.resolve(:batch, :enabled) == true
+            Legion::Settings[:llm][:batch][:enabled] == true
           end
 
           def enqueue(messages: nil, model: nil, message: nil, callback: nil, provider: nil, priority: :normal, **opts)
@@ -39,8 +39,8 @@ module Legion
           end
 
           def flush(max_size: nil, max_wait: nil)
-            effective_max  = max_size || Legion::LLM::Settings.resolve(:batch, :max_batch_size)
-            effective_wait = max_wait || Legion::LLM::Settings.resolve(:batch, :window_seconds)
+            effective_max  = max_size || Legion::Settings[:llm][:batch][:max_batch_size]
+            effective_wait = max_wait || Legion::Settings[:llm][:batch][:window_seconds]
             cutoff = Time.now.utc - effective_wait
 
             to_flush = @mutex.synchronize do
@@ -79,8 +79,8 @@ module Legion
             {
               enabled:        enabled?,
               queue_size:     entries.size,
-              max_batch_size: Legion::LLM::Settings.resolve(:batch, :max_batch_size),
-              window_seconds: Legion::LLM::Settings.resolve(:batch, :window_seconds),
+              max_batch_size: Legion::Settings[:llm][:batch][:max_batch_size],
+              window_seconds: Legion::Settings[:llm][:batch][:window_seconds],
               oldest_queued:  oldest ? oldest[:queued_at].iso8601 : nil,
               by_priority:    entries.group_by { |e| e[:priority] }.transform_values(&:size)
             }
@@ -115,7 +115,7 @@ module Legion
             return if @flush_timer
             return unless defined?(Concurrent::TimerTask)
 
-            interval = Legion::LLM::Settings.resolve(:batch, :window_seconds)
+            interval = Legion::Settings[:llm][:batch][:window_seconds]
             return if interval <= 0
 
             @flush_timer = Concurrent::TimerTask.new(execution_interval: interval) do

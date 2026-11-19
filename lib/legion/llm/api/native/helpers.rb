@@ -95,11 +95,11 @@ module Legion
             when 'grep'
               pattern = kwargs[:pattern] || kwargs[:query] || kwargs.values.first.to_s
               path = kwargs[:path] || Dir.pwd
-              output, = ::Open3.capture2e('grep', '-rn', "--include=#{Legion::LLM::Settings.resolve(:tools, :native, :grep_include)}", pattern, path)
-              output.lines.first(Legion::LLM::Settings.resolve(:tools, :native, :grep_max_lines)).join
+              output, = ::Open3.capture2e('grep', '-rn', "--include=#{Legion::Settings[:llm][:tools][:native][:grep_include]}", pattern, path)
+              output.lines.first(Legion::Settings[:llm][:tools][:native][:grep_max_lines]).join
             when 'glob'
               pattern = kwargs[:pattern] || kwargs.values.first.to_s
-              Dir.glob(pattern).first(Legion::LLM::Settings.resolve(:tools, :native, :glob_max_matches)).join("\n")
+              Dir.glob(pattern).first(Legion::Settings[:llm][:tools][:native][:glob_max_matches]).join("\n")
             when 'web_fetch'
               url = kwargs[:url] || kwargs.values.first.to_s
               raw_max_length = kwargs[:maxLength] || kwargs[:max_length]
@@ -115,7 +115,7 @@ module Legion
               end
             when 'web_search'
               query = kwargs[:query] || kwargs.values.first.to_s
-              max_results = (kwargs[:max_results] || kwargs[:maxResults] || Legion::LLM::Settings.resolve(:tools, :native, :web_search_results)).to_i
+              max_results = (kwargs[:max_results] || kwargs[:maxResults] || Legion::Settings[:llm][:tools][:native][:web_search_results]).to_i
               begin
                 require 'legion/cli/chat/web_search'
                 results = Legion::CLI::Chat::WebSearch.search(query, max_results: max_results, auto_fetch: false)
@@ -425,7 +425,7 @@ module Legion
                   done_only += 1
                 end
 
-                limit = Legion::LLM::Settings.resolve(:logging, :tool_name_limit)
+                limit = Legion::Settings[:llm][:logging][:tool_name_limit]
                 names = tool_calls.map { |tool_call| openai_tool_call_name(tool_call) }.compact
                 names = names.first(limit).join(',') + (names.size > limit ? ",+#{names.size - limit}more" : '')
                 log.info(

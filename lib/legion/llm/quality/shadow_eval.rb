@@ -10,20 +10,20 @@ module Legion
 
         class << self
           def enabled?
-            shadow_setting(:enabled) == true
+            Legion::Settings[:llm][:shadow][:enabled] == true
           end
 
           def should_sample?
             return false unless enabled?
 
-            rate = shadow_setting(:sample_rate)
+            rate = Legion::Settings[:llm][:shadow][:sample_rate]
             rand < rate
           end
 
           def evaluate(primary_response:, messages: nil, shadow_model: nil)
             # SSOT v3: no hard-coded shadow model. Forward the configured shadow
             # model when present, otherwise an empty constraint the router resolves.
-            shadow_model ||= shadow_setting(:model)
+            shadow_model ||= Legion::Settings[:llm][:shadow][:model]
             log.info(
               "[llm][shadow] evaluate primary_model=#{primary_response[:model]} shadow_model=#{shadow_model || 'auto'}"
             )
@@ -97,10 +97,6 @@ module Legion
 
           private
 
-          def shadow_setting(key)
-            Legion::LLM::Settings.resolve(:shadow, key)
-          end
-
           # Normalize a canonical pipeline Inference::Response (or hash / provider
           # message) into the { content:, model:, usage: } shape compare expects.
           def normalize_shadow_response(response)
@@ -127,7 +123,9 @@ module Legion
           end
 
           def record(comparison)
-            limit = shadow_setting(:max_history)
+            limit = Legion::Settings[:llm][:shadow][:max_history]
+            raise ArgumentError, 'llm.shadow.max_history must be a nonnegative integer' unless limit.is_a?(Integer) && limit >= 0
+
             history << comparison
             history.shift([history.size - limit, 0].max)
           end
@@ -137,7 +135,7 @@ module Legion
 
             input  = usage[:input_tokens] || usage[:prompt_tokens] || 0
             output = usage[:output_tokens] || usage[:completion_tokens] || 0
-            Metering::Pricing.estimate(model_id: model, input_tokens: input, output_tokens: output)
+            Legion::LLM::Metering::Pricing.estimate(model_id: model, input_tokens: input, output_tokens: output)
           end
 
           def avg(values)

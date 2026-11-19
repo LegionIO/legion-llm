@@ -136,6 +136,7 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
 
   it 'uses the embedding TTL owner when cache settings are partial' do
     Legion::Settings[:llm][:embedding][:cache] = { enabled: true }
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
     expect(described_class.send(:cache_ttl)).to eq(86_400)
     Legion::Settings[:llm][:embedding][:cache][:ttl] = 123
     expect(described_class.send(:cache_ttl)).to eq(123)

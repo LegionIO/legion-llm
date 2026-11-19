@@ -6,7 +6,7 @@ require 'faraday'
 require_relative '../publisher_identity'
 require_relative '../tools/special'
 require_relative '../tools/mcp_execution'
-require_relative 'background'
+require 'legion/llm/inference/background'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 require_relative 'executor/routing'
@@ -271,7 +271,7 @@ module Legion
           pipeline_start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
           @step_timing_hash = {}
           STEPS.each do |step|
-            if Profile.skip?(@profile, step)
+            if Legion::LLM::Inference::Profile.skip?(@profile, step)
               skipped += 1
               next
             end
@@ -563,7 +563,7 @@ module Legion
           log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size} profile=#{@profile}"
           skipped = []
           PRE_PROVIDER_STEPS.each do |step|
-            if Profile.skip?(@profile, step)
+            if Legion::LLM::Inference::Profile.skip?(@profile, step)
               skipped << step
               next
             end
@@ -584,7 +584,7 @@ module Legion
           else
             skipped = []
             POST_PROVIDER_STEPS.each do |step|
-              if Profile.skip?(@profile, step)
+              if Legion::LLM::Inference::Profile.skip?(@profile, step)
                 skipped << step
                 next
               end
@@ -601,7 +601,7 @@ module Legion
 
         def execute_post_provider_steps_mixed
           POST_PROVIDER_STEPS.each do |step|
-            next if Profile.skip?(@profile, step)
+            next if Legion::LLM::Inference::Profile.skip?(@profile, step)
             next if ASYNC_SAFE_STEPS.include?(step) || step == :post_response
 
             execute_step(step) { send(:"step_#{step}") }
@@ -609,9 +609,9 @@ module Legion
 
           # Audit the final envelope after normalization, metering and context
           # storage, as the old async path did, without optional admission.
-          execute_step(:post_response) { step_post_response } unless Profile.skip?(@profile, :post_response)
+          execute_step(:post_response) { step_post_response } unless Legion::LLM::Inference::Profile.skip?(@profile, :post_response)
 
-          async_steps = ASYNC_SAFE_STEPS.reject { |step| Profile.skip?(@profile, step) }
+          async_steps = ASYNC_SAFE_STEPS.reject { |step| Legion::LLM::Inference::Profile.skip?(@profile, step) }
           async_steps.delete(:knowledge_capture) unless knowledge_capture_requested?
           return if async_steps.empty?
 
@@ -621,9 +621,9 @@ module Legion
           @_response_warnings_snapshot = @warnings.dup.freeze
           @_response_participants_snapshot = @timeline.participants.dup.freeze
           profile = @profile
-          accepted = Background.post(workload: :post_steps) do
+          accepted = Legion::LLM::Inference::Background.post(workload: :post_steps) do
             async_steps.each do |step|
-              next if Profile.skip?(profile, step)
+              next if Legion::LLM::Inference::Profile.skip?(profile, step)
 
               send(:"step_#{step}", async: false)
             end
@@ -737,7 +737,7 @@ module Legion
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str[0, Legion::LLM::Settings.resolve(:compliance, :tool_audit_result_max_chars)], result_size: result_str.bytesize, status: is_error ? :error : :success,
+            result: result_str[0, Legion::Settings[:llm][:compliance][:tool_audit_result_max_chars]], result_size: result_str.bytesize, status: is_error ? :error : :success,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
 
@@ -756,7 +756,9 @@ module Legion
         def flush_deferred_tool_audits
           return if @deferred_tool_audits.empty?
 
-          result_limit = Legion::LLM::Settings.resolve(:compliance, :tool_audit_result_max_chars)
+          result_limit = Legion::Settings[:llm][:compliance][:tool_audit_result_max_chars]
+          raise ArgumentError, 'llm.compliance.tool_audit_result_max_chars must be a nonnegative integer' unless result_limit.is_a?(Integer) && result_limit >= 0
+
           audits = @deferred_tool_audits.dup
           @deferred_tool_audits.clear
 
@@ -1549,7 +1551,7 @@ module Legion
           output = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : 0
           return {} unless @resolved_model && (input + output).positive?
 
-          estimated = Metering::Pricing.estimate(
+          estimated = Legion::LLM::Metering::Pricing.estimate(
             model_id:      @resolved_model,
             input_tokens:  input,
             output_tokens: output

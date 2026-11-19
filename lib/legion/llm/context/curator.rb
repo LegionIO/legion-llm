@@ -27,12 +27,12 @@ module Legion
 
         # Called async after each turn completes — zero latency impact.
         def curate_turn(turn_messages:, assistant_response:)
-          return unless enabled?
+          return unless Legion::Settings[:llm][:context_curation][:enabled]
 
           current_turn_count = Array(turn_messages).size + (assistant_response ? 1 : 0)
           log.debug "[llm][curator] action=curate_turn conversation_id=#{@conversation_id} turn_messages=#{current_turn_count}"
 
-          accepted = Inference::Background.post(workload: :curation, key: @conversation_id) do
+          accepted = Legion::LLM::Inference::Background.post(workload: :curation, key: @conversation_id) do
             all_messages = Inference::Conversation.messages(@conversation_id)
 
             # Determine where the current turn starts in the full message list.
@@ -46,7 +46,7 @@ module Legion
             # last N turns so the model retains full context of recent work.
             # The current turn is always excluded (it's the most recent). We need
             # to additionally preserve (preserve_recent_turns - 1) prior turns.
-            preserve_turns = setting(:preserve_recent_turns).to_i
+            preserve_turns = Legion::Settings[:llm][:context_curation][:preserve_recent_turns].to_i
             preserve_turns = 1 unless preserve_turns.positive?
             preserve_prior = [preserve_turns - 1, 0].max
 
@@ -72,7 +72,7 @@ module Legion
         # Called sync when building next API request.
         # Returns curated messages when available; nil means use raw history.
         def curated_messages
-          return nil unless enabled?
+          return nil unless Legion::Settings[:llm][:context_curation][:enabled]
 
           @curation_mutex.synchronize do
             @curated_messages ||= load_curated(@conversation_id)
@@ -82,14 +82,14 @@ module Legion
         # Drops older conversation turns from the prompt window after archiving
         # them into Apollo for scoped retrieval on future turns.
         def drop_and_archive(messages, conversation_id:)
-          return messages unless archive_dropped_turns?
+          return messages unless Legion::Settings[:llm][:context_curation][:archive_dropped_turns]
           return messages unless messages.is_a?(Array) && messages.any?
 
-          target_tokens = setting(:target_context_tokens)
+          target_tokens = Legion::Settings[:llm][:context_curation][:target_context_tokens]
           estimated = Context::Compressor.estimate_tokens(messages)
           return messages if estimated <= target_tokens
 
-          preserve_recent = setting(:archive_preserve_recent).to_i
+          preserve_recent = Legion::Settings[:llm][:context_curation][:archive_preserve_recent].to_i
           preserve_recent = 1 unless preserve_recent.positive?
           return messages if messages.size <= preserve_recent
 
@@ -113,7 +113,7 @@ module Legion
         # Heuristic: distill a single tool-result message to a compact summary.
         def distill_tool_result(msg, _assistant_context = nil)
           content = msg[:content].to_s
-          max_chars = setting(:tool_result_max_chars)
+          max_chars = Legion::Settings[:llm][:context_curation][:tool_result_max_chars]
           return msg if content.length <= max_chars
 
           summary = heuristic_tool_summary(content, tool_name_from(msg))
@@ -124,7 +124,7 @@ module Legion
 
         # Heuristic: remove extended thinking blocks, keep conclusions.
         def strip_thinking(msg)
-          return msg unless setting(:thinking_eviction)
+          return msg unless Legion::Settings[:llm][:context_curation][:thinking_eviction]
           return msg if msg[:role] == :tool
 
           content = msg[:content].to_s
@@ -139,7 +139,7 @@ module Legion
           chars_removed = content.length - stripped.length
           log.info "[llm][curator] action=strip_thinking conversation_id=#{@conversation_id} " \
                    "chars_removed=#{chars_removed} original_chars=#{content.length} stripped_chars=#{stripped.length}"
-          if content.length < setting(:debug_content_max_chars)
+          if content.length < Legion::Settings[:llm][:context_curation][:debug_content_max_chars]
             log.debug "[llm][curator] action=strip_thinking_debug conversation_id=#{@conversation_id} " \
                       "original=#{content.inspect} stripped=#{stripped.inspect} role=#{msg[:role]}"
           end
@@ -148,15 +148,15 @@ module Legion
 
         # Heuristic: detect multi-turn clarification that reached agreement; fold to single system note.
         def fold_resolved_exchanges(messages)
-          return messages unless setting(:exchange_folding)
+          return messages unless Legion::Settings[:llm][:context_curation][:exchange_folding]
 
           result = []
           folded_count = 0
           i = 0
           while i < messages.length
-            window = messages[i, setting(:exchange_window)]
+            window = messages[i, Legion::Settings[:llm][:context_curation][:exchange_window]]
             if resolved_exchange?(window)
-              conclusion = window.last[:content].to_s[0, setting(:conclusion_max_chars)]
+              conclusion = window.last[:content].to_s[0, Legion::Settings[:llm][:context_curation][:conclusion_max_chars]]
               note = {
                 role:             :system,
                 content:          "[Exchange resolved: #{conclusion}]",
@@ -180,7 +180,7 @@ module Legion
 
         # Heuristic: if same file was read multiple times, keep only the latest read.
         def evict_superseded(messages)
-          return messages unless setting(:superseded_eviction)
+          return messages unless Legion::Settings[:llm][:context_curation][:superseded_eviction]
 
           file_last_seen = {}
           messages.each_with_index do |msg, idx|
@@ -212,9 +212,9 @@ module Legion
         # of an earlier system message. Unrecognized, non-duplicate system
         # messages and every non-system message pass through untouched.
         def strip_harness_noise(messages)
-          return messages unless setting(:harness_noise_strip)
+          return messages unless Legion::Settings[:llm][:context_curation][:harness_noise_strip]
 
-          patterns = Array(setting(:harness_noise_patterns))
+          patterns = Array(Legion::Settings[:llm][:context_curation][:harness_noise_patterns])
           seen_system = {}
           result = messages.reject do |msg|
             next false unless (msg[:role] || msg['role']).to_s == 'system'
@@ -240,9 +240,9 @@ module Legion
 
         # Heuristic: deduplicate near-identical messages using Jaccard similarity.
         def dedup_similar(messages, threshold: nil)
-          return messages unless setting(:dedup_enabled)
+          return messages unless Legion::Settings[:llm][:context_curation][:dedup_enabled]
 
-          threshold ||= setting(:dedup_threshold)
+          threshold ||= Legion::Settings[:llm][:context_curation][:dedup_threshold]
           result = Context::Compressor.deduplicate_messages(messages, threshold: threshold)
           if result[:removed].positive?
             log.info "[llm][curator] action=dedup_similar conversation_id=#{@conversation_id} " \
@@ -257,7 +257,7 @@ module Legion
           return distill_tool_result(msg, assistant_response) unless llm_assisted?
 
           content = msg[:content].to_s
-          max_chars = setting(:tool_result_max_chars)
+          max_chars = Legion::Settings[:llm][:context_curation][:tool_result_max_chars]
           return msg if content.length <= max_chars
 
           summary = llm_summarize_tool_result(content, tool_name_from(msg))
@@ -273,22 +273,10 @@ module Legion
 
         private
 
-        def enabled?
-          setting(:enabled)
-        end
-
         def llm_assisted?
-          enabled? &&
-            setting(:llm_assisted) &&
-            setting(:mode) == 'llm_assisted'
-        end
-
-        def archive_dropped_turns?
-          setting(:archive_dropped_turns)
-        end
-
-        def setting(key)
-          Legion::LLM::Settings.resolve(:context_curation, key)
+          Legion::Settings[:llm][:context_curation][:enabled] &&
+            Legion::Settings[:llm][:context_curation][:llm_assisted] &&
+            Legion::Settings[:llm][:context_curation][:mode] == 'llm_assisted'
         end
 
         def strip_thinking_tags(text)
@@ -373,7 +361,7 @@ module Legion
         def apply_curation_pipeline(messages)
           return messages if messages.nil? || messages.empty?
 
-          preserve_turns = setting(:preserve_recent_turns).to_i
+          preserve_turns = Legion::Settings[:llm][:context_curation][:preserve_recent_turns].to_i
           preserve_turns = 1 unless preserve_turns.positive?
 
           split_idx = find_preserve_split(messages, preserve_turns)
@@ -572,17 +560,17 @@ module Legion
           when /read_file|read/
             first_line = lines.first.to_s.chomp
             last_line  = lines.last.to_s.chomp
-            "Read file (#{line_count} lines). First: #{first_line[0, setting(:file_preview_chars)]}... Last: #{last_line[0, setting(:file_preview_chars)]}"
+            "Read file (#{line_count} lines). First: #{first_line[0, Legion::Settings[:llm][:context_curation][:file_preview_chars]]}... Last: #{last_line[0, Legion::Settings[:llm][:context_curation][:file_preview_chars]]}"
           when /search|grep|glob/
             file_count = content.lines.count { |l| l.include?('/') }
             "Search returned #{line_count} matches across #{file_count} files"
           when /bash|run_command|execute/
-            exit_match = content[0, setting(:exit_status_scan_chars)].match(/exit(?: code)?:? *(\d+)/i)
+            exit_match = content[0, Legion::Settings[:llm][:context_curation][:exit_status_scan_chars]].match(/exit(?: code)?:? *(\d+)/i)
             exit_code  = exit_match ? exit_match[1] : '0'
-            last_lines = lines.last(setting(:command_tail_lines)).map(&:chomp).join(' | ')
-            "Command output (#{line_count} lines), exit #{exit_code}: #{last_lines[0, setting(:command_preview_chars)]}"
+            last_lines = lines.last(Legion::Settings[:llm][:context_curation][:command_tail_lines]).map(&:chomp).join(' | ')
+            "Command output (#{line_count} lines), exit #{exit_code}: #{last_lines[0, Legion::Settings[:llm][:context_curation][:command_preview_chars]]}"
           else
-            preview = content[0, setting(:tool_preview_chars)]
+            preview = content[0, Legion::Settings[:llm][:context_curation][:tool_preview_chars]]
             "Tool result (#{line_count} lines, #{char_count} chars): #{preview}"
           end
         end
@@ -593,7 +581,7 @@ module Legion
         end
 
         def infer_tool_name(content)
-          first_line = content[0, setting(:tool_preview_chars)]
+          first_line = content[0, Legion::Settings[:llm][:context_curation][:tool_preview_chars]]
           return :read_file   if first_line.match?(/\AFile:|\ARead:|\A#\s+\S+\.rb|\A\d+\t/)
           return :bash        if first_line.match?(/exit code|STDOUT|STDERR/i)
           return :search      if first_line.include?(' match') && first_line.match?(/\d+ match/)
@@ -617,13 +605,13 @@ module Legion
           # (signal `include?` against a String), NOT array intersection. The
           # cop's `intersect?` suggestion raises TypeError on a String arg.
           has_clarification = contents.any? { |c| clarification_signals.any? { |s| c.include?(s) } }
-          has_conclusion    = contents.last.length < setting(:short_conclusion_chars) || conclusion_signals.any? { |s| contents.last.include?(s) }
+          has_conclusion    = contents.last.length < Legion::Settings[:llm][:context_curation][:short_conclusion_chars] || conclusion_signals.any? { |s| contents.last.include?(s) }
           has_clarification && has_conclusion
         end
 
         # Extract a file path from content heuristically.
         def extract_file_path(content)
-          prefix = content[0, setting(:file_path_scan_chars)]
+          prefix = content[0, Legion::Settings[:llm][:context_curation][:file_path_scan_chars]]
           match = prefix.match(%r{(?:reading|read|loaded?|opened?|file:)\s+[`'"]?(/\S+)[`'"]?}i) ||
                   prefix.match(%r{^(/[\w./-]+\.\w+)})
           match ? match[1] : nil
@@ -638,7 +626,7 @@ module Legion
           # distillation (fall back to the heuristic path). When a model is set the
           # turn flows through the canonical chat_direct -> Executor (RoutingSession)
           # path; the router picks the eligible lane.
-          model = setting(:llm_model)
+          model = Legion::Settings[:llm][:context_curation][:llm_model]
           return nil unless model
 
           prompt = build_distillation_prompt(content, tool_name)
@@ -655,7 +643,7 @@ module Legion
             Summarize this tool result#{tool_hint} in 1-3 sentences, preserving key facts, file paths, line numbers, and error messages. Omit irrelevant details.
 
             Tool result:
-            #{content[0, setting(:distillation_input_chars)]}
+            #{content[0, Legion::Settings[:llm][:context_curation][:distillation_input_chars]]}
           PROMPT
         end
       end

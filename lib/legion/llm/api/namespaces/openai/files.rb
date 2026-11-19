@@ -25,7 +25,7 @@ module Legion
             }.freeze
 
             def self.files_dir
-              ::File.expand_path(Legion::LLM::Settings.resolve(:files, :storage_path))
+              ::File.expand_path(Legion::Settings[:llm][:files][:storage_path])
             end
 
             def self.registered(app) # rubocop:disable Metrics/AbcSize

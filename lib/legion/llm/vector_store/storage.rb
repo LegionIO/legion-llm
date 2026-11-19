@@ -105,7 +105,7 @@ module Legion
           (dot / denom).clamp(-1.0, 1.0)
         end
 
-        def chunk_text(text, max_chars: Legion::LLM::Settings.resolve(:vector_store, :chunk_target_chars))
+        def chunk_text(text, max_chars: Legion::Settings[:llm][:vector_store][:chunk_target_chars])
           paragraphs = text.split(/\n\n+/).map(&:strip).reject(&:empty?)
           chunks     = []
           current    = +''

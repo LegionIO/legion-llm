@@ -58,7 +58,10 @@ module Legion
           return 0
         end
 
-        batch_sleep = Legion::LLM::Settings.resolve(:metering, :spool, :flush_batch_sleep)
+        batch_sleep = Legion::Settings[:llm][:metering][:spool][:flush_batch_sleep]
+        unless batch_sleep.is_a?(Numeric) && batch_sleep.real? && batch_sleep.finite? && batch_sleep >= 0
+          raise ArgumentError, 'llm.metering.spool.flush_batch_sleep must be finite and nonnegative'
+        end
 
         # Read and truncate atomically under the mutex so no events written
         # between read and truncate can be silently lost.
@@ -262,7 +265,7 @@ module Legion
         path = spool_file_path
         return unless File.exist?(path)
 
-        max = Legion::LLM::Settings.resolve(:metering, :spool, :max_events)
+        max = Legion::Settings[:llm][:metering][:spool][:max_events]
         lines = File.readlines(path, chomp: true)
         return if lines.size < max
 
@@ -280,7 +283,7 @@ module Legion
       # paths (e.g. for containerised deployments where $HOME is not writable).
       # The default path is registered alongside the other spool settings.
       def spool_file_path
-        File.expand_path(Legion::LLM::Settings.resolve(:metering, :spool, :path))
+        File.expand_path(Legion::Settings[:llm][:metering][:spool][:path])
       end
 
       def spool_dir_path

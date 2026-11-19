@@ -22,7 +22,9 @@ module Legion
               recorded_at:   Time.now
             }
 
-            max_entries = Legion::LLM::Settings.resolve(:metering, :token_history_limit)
+            max_entries = Legion::Settings[:llm][:metering][:token_history_limit]
+            raise ArgumentError, 'llm.metering.token_history_limit must be a nonnegative integer' unless max_entries.is_a?(Integer) && max_entries >= 0
+
             MUTEX.synchronize do
               store << entry
               # Evict oldest entries to prevent unbounded memory growth in long-running processes

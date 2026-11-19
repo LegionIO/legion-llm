@@ -64,7 +64,7 @@ module Legion
           Legion::JSON.load(raw)
         end
 
-        def poll(request_id, timeout: default_ttl, interval: Legion::LLM::Settings.resolve(:prompt_caching, :response_cache, :poll_interval_seconds))
+        def poll(request_id, timeout: default_ttl, interval: Legion::Settings[:llm][:prompt_caching][:response_cache][:poll_interval_seconds])
           deadline = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) + timeout
 
           while ::Process.clock_gettime(::Process::CLOCK_MONOTONIC) < deadline
@@ -141,7 +141,7 @@ module Legion
         end
 
         private_class_method def self.default_ttl
-          Legion::LLM::Settings.resolve(:prompt_caching, :response_cache, :ttl_seconds)
+          Legion::Settings[:llm][:prompt_caching][:response_cache][:ttl_seconds]
         end
 
         private_class_method def self.spool_threshold
@@ -149,7 +149,7 @@ module Legion
         end
 
         private_class_method def self.spool_dir
-          File.expand_path(Legion::LLM::Settings.resolve(:prompt_caching, :response_cache, :spool_dir))
+          File.expand_path(Legion::Settings[:llm][:prompt_caching][:response_cache][:spool_dir])
         end
 
         private_class_method def self.write_response(request_id, response_text, ttl)

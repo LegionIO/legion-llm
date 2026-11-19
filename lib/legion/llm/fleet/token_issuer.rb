@@ -12,14 +12,16 @@ module Legion
       TokenError = ::Legion::Extensions::Llm::Fleet::TokenError unless const_defined?(:TokenError, false)
 
       module TokenIssuer
+        extend Legion::Logging::Helper
+
         module_function
 
         def issue(payload)
-          ttl = token_ttl_seconds
+          ttl = Integer(Legion::Settings[:llm][:fleet][:dispatch][:token_ttl_seconds])
           now = Time.now.to_i
           claims = required_claims(payload).merge(
-            iss: issuer,
-            aud: audience,
+            iss: Legion::Settings[:llm][:fleet][:auth][:issuer],
+            aud: Legion::Settings[:llm][:fleet][:auth][:audience],
             iat: now,
             exp: now + ttl,
             nbf: now,
@@ -30,8 +32,8 @@ module Legion
             claims,
             signing_key: signing_key,
             ttl:         ttl,
-            issuer:      issuer,
-            algorithm:   algorithm
+            issuer:      Legion::Settings[:llm][:fleet][:auth][:issuer],
+            algorithm:   Legion::Settings[:llm][:fleet][:auth][:algorithm]
           )
         rescue TokenError
           raise
@@ -75,26 +77,6 @@ module Legion
           claims[:execution_contract] = execution_contract
           claims[:offering_id] = offering_id
           claims
-        end
-
-        def token_ttl_seconds
-          Integer(Legion::Settings[:llm][:fleet][:dispatch][:token_ttl_seconds])
-        end
-
-        def issuer
-          auth_setting(:issuer)
-        end
-
-        def audience
-          auth_setting(:audience)
-        end
-
-        def algorithm
-          auth_setting(:algorithm)
-        end
-
-        def auth_setting(key)
-          Legion::LLM::Settings.resolve(:fleet, :auth, key)
         end
 
         def signing_key

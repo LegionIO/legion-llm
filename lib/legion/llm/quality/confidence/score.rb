@@ -11,7 +11,8 @@ module Legion
         # source - Symbol: :heuristic, :logprobs, :caller_provided
         # signals - Hash of contributing signals and their raw values (informational)
         Score = ::Data.define(:score, :band, :source, :signals) do
-          def self.build(score:, bands:, source: :heuristic, signals: {})
+          def self.build(score:, bands:, source: :heuristic, signals: {}, **)
+            bands = Legion::Settings[:llm][:confidence][:bands].merge(bands)
             clamped = score.to_f.clamp(0.0, 1.0)
             new(
               score:   clamped,
@@ -34,10 +35,10 @@ module Legion
             private
 
             def classify(score, bands)
-              return :very_low  if score < bands.fetch(:low) { Legion::LLM::Settings.resolve(:confidence, :bands, :low) }
-              return :low       if score < bands.fetch(:medium) { Legion::LLM::Settings.resolve(:confidence, :bands, :medium) }
-              return :medium    if score < bands.fetch(:high) { Legion::LLM::Settings.resolve(:confidence, :bands, :high) }
-              return :high      if score < bands.fetch(:very_high) { Legion::LLM::Settings.resolve(:confidence, :bands, :very_high) }
+              return :very_low  if score < bands[:low]
+              return :low       if score < bands[:medium]
+              return :medium    if score < bands[:high]
+              return :high      if score < bands[:very_high]
 
               :very_high
             end

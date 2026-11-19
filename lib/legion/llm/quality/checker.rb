@@ -19,7 +19,7 @@ module Legion
         ].freeze
 
         class << self
-          def check(response, quality_threshold: Legion::LLM::Settings.resolve(:quality, :threshold), json_expected: false, quality_check: nil)
+          def check(response, quality_threshold: Legion::Settings[:llm][:quality][:threshold], json_expected: false, quality_check: nil)
             failures = []
             content = effective_content(response)
             has_tool_calls = response.respond_to?(:tool_calls) && response.tool_calls&.any?
@@ -27,19 +27,19 @@ module Legion
             failures << :empty_response if !has_tool_calls && (content.nil? || content.strip.empty?)
 
             unless failures.include?(:empty_response)
-              if quality_setting(:too_short) && content.length < quality_threshold
+              if Legion::Settings[:llm][:quality][:too_short] && content.length < quality_threshold
                 failures << :too_short
                 log.debug "[llm][quality] check=too_short result=fail content_length=#{content.length} threshold=#{quality_threshold}"
               end
-              if quality_setting(:repetition) && repetitive?(content)
+              if Legion::Settings[:llm][:quality][:repetition] && repetitive?(content)
                 failures << :repetition
                 log.debug "[llm][quality] check=repetition result=fail content_length=#{content.length}"
               end
-              if quality_setting(:truncated) && truncated?(content)
+              if Legion::Settings[:llm][:quality][:truncated] && truncated?(content)
                 failures << :truncated
                 log.debug '[llm][quality] check=truncated result=fail'
               end
-              if quality_setting(:refusal) && refusal?(content)
+              if Legion::Settings[:llm][:quality][:refusal] && refusal?(content)
                 failures << :refusal
                 log.debug '[llm][quality] check=refusal result=fail'
               end
@@ -94,15 +94,11 @@ module Legion
             ''
           end
 
-          def quality_setting(key)
-            Legion::LLM::Settings.resolve(:quality, key)
-          end
-
           private
 
           def repetitive?(content)
-            width = quality_setting(:repetition_min_chars)
-            count = quality_setting(:repetition_count)
+            width = Legion::Settings[:llm][:quality][:repetition_min_chars]
+            count = Legion::Settings[:llm][:quality][:repetition_count]
             return false if content.length < width * count
 
             seen = {}
@@ -115,7 +111,7 @@ module Legion
           end
 
           def truncated?(content)
-            return false if content.length < quality_setting(:truncation_min_chars)
+            return false if content.length < Legion::Settings[:llm][:quality][:truncation_min_chars]
 
             last_chars = content[-3..]
             return true if last_chars&.match?(/\w{3}\z/) && !content.end_with?('.', '!', '?', '`', '"', "'", ')', ']', '}', "\n")

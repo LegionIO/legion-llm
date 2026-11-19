@@ -36,7 +36,7 @@ module Legion
           # Emit Anthropic streaming events for a single text chunk.
           # Returns the SSE lines for the delta event.
           def self.format_chunk(text, index: 0)
-            log.debug("[llm][api][anthropic] action=format_chunk index=#{index} text=#{text[0, Legion::LLM::Settings.resolve(:logging, :anthropic_preview_chars)]}")
+            log.debug("[llm][api][anthropic] action=format_chunk index=#{index} text=#{text[0, Legion::Settings[:llm][:logging][:anthropic_preview_chars]]}")
             {
               type:  'content_block_delta',
               index: index,

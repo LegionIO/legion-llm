@@ -56,7 +56,7 @@ module Legion
 
                 inputs = raw_input.is_a?(Array) ? raw_input : [raw_input.to_s]
 
-                max_inputs = Legion::LLM::Settings.resolve(:moderation, :max_inputs)
+                max_inputs = Legion::Settings[:llm][:moderation][:max_inputs]
                 if inputs.size > max_inputs
                   return openai_error("input array exceeds maximum size of #{max_inputs}",
                                       type: 'invalid_request_error', code: 'too_many_inputs', status_code: 400)
@@ -113,7 +113,7 @@ module Legion
                 system:   build_moderation_prompt,
                 messages: [{ role: 'user', content: "<content_to_evaluate>#{text}</content_to_evaluate>" }],
                 routing:  { model: model },
-                tokens:   { max: Legion::LLM::Settings.resolve(:moderation, :max_output_tokens) },
+                tokens:   { max: Legion::Settings[:llm][:moderation][:max_output_tokens] },
                 caller:   caller,
                 stream:   false,
                 cache:    { strategy: :default, cacheable: true }
