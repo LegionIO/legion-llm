@@ -247,7 +247,7 @@ module Legion
           context_window = final_context_window
           return unless context_window.positive?
 
-          threshold = (context_window * 0.90).to_i
+          threshold = (context_window * @request.routing_settings_snapshot.context_headroom_ppm) / 1_000_000
           estimated_tokens = final_dispatch_token_estimate(messages, dispatch_options)
           return if estimated_tokens <= threshold
 

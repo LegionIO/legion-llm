@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.23] - 2026-11-19
+
+### Fixed
+- Enforce the final dispatch context budget using the request's validated `router.context_headroom_ppm` snapshot instead of a fixed 90% threshold, retaining payload accounting and overflow handling. Fixes #226.
+
 ## [0.16.22] - 2026-11-19
 
 ### Fixed
