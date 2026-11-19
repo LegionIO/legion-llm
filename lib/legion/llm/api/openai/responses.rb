@@ -3,6 +3,7 @@
 require 'securerandom'
 require 'legion/logging/helper'
 require 'legion/llm/types'
+require 'legion/llm/api/client_translators/openai_responses'
 
 module Legion
   module LLM
@@ -88,7 +89,9 @@ module Legion
                   Responses.stream_response(out, executor, request_id: request_id, model: model, upstream_body: body)
                 rescue StandardError => e
                   handle_exception(e, level: :error, handled: false, operation: 'llm.api.openai.responses.stream', request_id: request_id)
-                  out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
+                  out << Legion::LLM::API::ClientTranslators::OpenAIResponses.format_sse_event(
+                    event: 'error', payload: { type: 'server_error', message: e.message }
+                  )
                 end
               else
                 pipeline_response = executor.call_responses(body: body, stream: false)
@@ -369,7 +372,7 @@ module Legion
           end
 
           def self.sse_event(name, payload)
-            "event: #{name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
+            Legion::LLM::API::ClientTranslators::OpenAIResponses.format_sse_event(event: name, payload: payload)
           end
 
           def self.build_output_tool_calls(pipeline_response)

@@ -33,6 +33,17 @@ module Legion
 
           Canonical = Legion::Extensions::Llm::Canonical
 
+          # JSON Unicode escapes keep raw SSE byte buffers safe to serialize as
+          # JSON again, even when an HTTP client labels them ASCII-8BIT. Escape
+          # only at the wire boundary; canonical values and decoded strings stay
+          # intact. UTF-16 code units preserve non-BMP characters (RFC 8259 §7).
+          def self.format_sse_event(event:, payload:, **)
+            json = Legion::JSON.dump(payload).encode(Encoding::US_ASCII, fallback: lambda { |character|
+              character.encode(Encoding::UTF_16BE).unpack('n*').map { |unit| format('\\u%04x', unit) }.join
+            })
+            "event: #{event}\ndata: #{json}\n\n"
+          end
+
           # One usage projection for synchronous responses and stream trailers.
           module UsageRendering
             include SharedExtractors
@@ -572,7 +583,7 @@ module Legion
             private
 
             def emit(event_name, payload)
-              @out << "event: #{event_name}\ndata: #{Legion::JSON.dump(payload)}\n\n"
+              @out << Legion::LLM::API::ClientTranslators::OpenAIResponses.format_sse_event(event: event_name, payload: payload)
             end
 
             def next_seq

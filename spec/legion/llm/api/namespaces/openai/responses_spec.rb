@@ -110,6 +110,18 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
     end
 
     context 'streaming' do
+      it 'keeps Unicode errors recordable from the raw HTTP byte stream' do
+        message = 'stream failed — 日本 🚀'
+        allow(executor_double).to receive(:call_stream).and_raise(RuntimeError, message)
+        post '/v1/responses', Legion::JSON.dump({ input: 'Hi', model: 'legionio', stream: true }), 'CONTENT_TYPE' => 'application/json'
+
+        expect(last_response.status).to eq(200)
+        recorded = Legion::JSON.pretty_generate({ raw_sse: last_response.body.b })
+        raw = Legion::JSON.load(recorded).fetch(:raw_sse)
+        event = Legion::JSON.load(raw.lines.find { |line| line.start_with?('data: ') }.delete_prefix('data: '))
+        expect(event).to eq(type: 'server_error', message: message)
+      end
+
       it 'streams typed SSE events via canonical call_stream path' do
         pipeline_response = double('Response',
                                    routing: { model: 'legionio' },

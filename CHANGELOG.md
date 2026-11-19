@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.31] - 2026-11-19
+
+### Fixed
+- Serialize Responses SSE payloads with lossless JSON Unicode escapes so clients can record raw HTTP byte buffers without ASCII-8BIT-to-UTF-8 errors. Preserve complete MCP arguments/results, following assistant text, and streaming errors through the current and legacy Responses renderers. Add in-process regressions for real MCP execution, buffered/unbuffered streaming, emoji, combining characters, and literal escape sequences. Refs #224.
+
 ## [0.16.30] - 2026-11-19
 
 ### Fixed

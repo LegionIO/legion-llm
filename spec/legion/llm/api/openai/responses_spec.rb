@@ -4,6 +4,19 @@ require 'spec_helper'
 require 'legion/llm/api/openai/responses'
 
 RSpec.describe Legion::LLM::API::OpenAI::Responses do
+  describe '.sse_event' do
+    it 'preserves Unicode when a legacy Responses byte stream is recorded as JSON' do
+      payload = { type: 'response.output_text.delta', delta: " — café 日本 🚀 e\u0301\n\"quoted\" \\u2014" }
+      wire = described_class.sse_event('response.output_text.delta', payload)
+      recorded = Legion::JSON.pretty_generate({ raw_sse: wire.b })
+      raw = Legion::JSON.load(recorded).fetch(:raw_sse)
+      data = raw.lines.find { |line| line.start_with?('data: ') }.delete_prefix('data: ')
+
+      expect(Legion::JSON.load(data)).to eq(payload)
+      expect(raw).to start_with("event: response.output_text.delta\n")
+    end
+  end
+
   describe '.normalize_input_array' do
     it 'normalizes standard message objects' do
       input = [
