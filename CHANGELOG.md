@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.25] - 2026-11-19
+
+### Fixed
+- Centralize estimated model rates in `llm.pricing` and the unknown-model policy in `llm.metering.unknown_model_price`. Estimation, recording and shadow evaluation now honor the same overrides and resolver. Unknown-model recording now shares the estimator's configurable 1/3 USD-per-million input/output defaults instead of a separate 5/15 fallback. Fixes #228.
+
 ## [0.16.24] - 2026-11-19
 
 ### Fixed

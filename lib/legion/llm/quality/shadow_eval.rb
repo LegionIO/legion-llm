@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/metering/estimator'
 module Legion
   module LLM
     module Quality
@@ -138,14 +139,7 @@ module Legion
 
             input  = usage[:input_tokens] || usage[:prompt_tokens] || 0
             output = usage[:output_tokens] || usage[:completion_tokens] || 0
-            pricing = cost_tracker_pricing(model.to_s)
-            ((input * pricing[:input] / 1_000_000.0) + (output * pricing[:output] / 1_000_000.0)).round(6)
-          end
-
-          def cost_tracker_pricing(model)
-            return Metering::Recorder.pricing_for(model) if defined?(Legion::LLM::Metering::Recorder)
-
-            { input: 5.0, output: 15.0 }
+            Metering::Pricing.estimate(model_id: model, input_tokens: input, output_tokens: output)
           end
 
           def avg(values)

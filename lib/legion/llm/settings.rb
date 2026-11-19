@@ -45,7 +45,7 @@ module Legion
           vector_store:              vector_store_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
-          pricing:                   {},
+          pricing:                   pricing_defaults,
           metering:                  metering_defaults,
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
@@ -412,6 +412,27 @@ module Legion
         }
       end
 
+      # Operator-maintained estimates in USD per million tokens. These rates
+      # do not publish model offerings or claim live provider billing prices.
+      def self.pricing_defaults
+        {
+          'claude-opus-4-6'   => { input: 15.0, output: 75.0 },
+          'claude-sonnet-4-6' => { input: 3.0, output: 15.0 },
+          'claude-haiku-4-5'  => { input: 0.80, output: 4.0 },
+          'claude-3-5-sonnet' => { input: 3.0, output: 15.0 },
+          'claude-3-haiku'    => { input: 0.25, output: 1.25 },
+          'gpt-4o'            => { input: 2.50, output: 10.0 },
+          'gpt-4o-mini'       => { input: 0.15, output: 0.60 },
+          'gpt-4-turbo'       => { input: 10.0, output: 30.0 },
+          'o3'                => { input: 10.0, output: 40.0 },
+          'o3-mini'           => { input: 1.10, output: 4.40 },
+          'o4-mini'           => { input: 1.10, output: 4.40 },
+          'gemini-2.5-pro'    => { input: 1.25, output: 10.0 },
+          'gemini-2.5-flash'  => { input: 0.15, output: 0.60 },
+          'gemini-2.0-flash'  => { input: 0.10, output: 0.40 }
+        }
+      end
+
       def self.metering_defaults
         {
           # M8: metering events are a raw-content compliance sink (RMQ +
@@ -419,8 +440,11 @@ module Legion
           # routing, and status — never the request messages, response
           # content, or response thinking. Set :raw to include them;
           # privacy-classified requests are excluded regardless of mode.
-          capture_mode: :metadata_only,
-          spool:        {
+          capture_mode:        :metadata_only,
+          # Explicit estimate for absent/unrecognized model pricing; all cost
+          # consumers share this policy, never a second inline fallback.
+          unknown_model_price: { input: 1.0, output: 3.0 },
+          spool:               {
             max_events:        10_000,
             flush_batch_sleep: 0.0
           }
