@@ -115,4 +115,62 @@ RSpec.describe Legion::LLM::Inference::Executor, 'context window enforcement' do
       end
     end
   end
+
+  describe 'annotated history text' do
+    it 'strips a leading thinking tag across cached blocks without moving media or changing recent history' do
+      assistant = Legion::Extensions::Llm::Canonical::Message.build(role: :assistant, content: [
+                                                                      { type: :text, text: '<thi' },
+                                                                      { type: :text, text: 'nk>private</thi' },
+                                                                      { type: :text, text: "nk>\nvisible", cache_control: { type: 'ephemeral' }, metadata: { origin: 'history' } },
+                                                                      { type: :image, source_type: :url, data: 'https://example.com/image.png' }
+                                                                    ])
+      user = Legion::Extensions::Llm::Canonical::Message.build(role: :user, content: 'Continue.')
+      original = Legion::JSON.dump(assistant)
+      result = executor.send(:strip_thinking_pure, [assistant, user, assistant])
+
+      expect(result.first.text).to eq('visible')
+      expect(result.first.content.first.cache_control).to eq(type: 'ephemeral')
+      expect(result.first.content.first.metadata).to eq(origin: 'history')
+      expect(result.first.content.last).to equal(assistant.content.last)
+      expect(result.last).to equal(assistant)
+      expect(Legion::JSON.dump(assistant)).to eq(original)
+    end
+
+    it 'recognizes a fully stripped single text block as empty without pruning a tool call' do
+      block = Legion::Extensions::Llm::Canonical::ContentBlock.text('<think>private</think>', cache_control: { type: 'ephemeral' })
+      assistant = Legion::Extensions::Llm::Canonical::Message.build(role: :assistant, content: block)
+      stripped = executor.send(:strip_thinking_pure, [assistant]).first
+      with_tool = stripped.with(tool_calls: [Legion::Extensions::Llm::Canonical::ToolCall.build(name: 'lookup', arguments: {})])
+
+      expect(stripped.content).to be_nil
+      expect(executor.send(:empty_assistant_message?, stripped)).to be(true)
+      expect(executor.send(:empty_assistant_message?, with_tool)).to be(false)
+      expect(assistant.content).to equal(block)
+    end
+
+    it 'applies one text cap across tool-result blocks while retaining media, annotations and the current turn' do
+      # Real settings, real mutation (standards §3): the per-example
+      # before(:each) resets Legion::Settings to defaults, so this is isolated.
+      Legion::Settings[:llm][:tools][:result_max_dispatch_chars] = 4
+      tool = Legion::Extensions::Llm::Canonical::Message.build(role: :tool, tool_call_id: 'lookup-1', content: [
+                                                                 { type: :text, text: 'ab', metadata: { origin: 'first' } },
+                                                                 { type: :image, source_type: :url, data: 'https://example.com/image.png' },
+                                                                 { type: :text, text: 'cdef', cache_control: { type: 'ephemeral' }, metadata: { origin: 'second' } },
+                                                                 { type: :text, text: 'TAIL' }
+                                                               ])
+      user = Legion::Extensions::Llm::Canonical::Message.build(role: :user, content: 'Continue.')
+      original = Legion::JSON.dump(tool)
+      result = executor.send(:trim_oversized_tool_results_pure, [tool, user, tool])
+
+      expect(result.first.text.split("\n\n", 2).first).to eq('abcd')
+      expect(result.first.text).not_to include('TAIL')
+      expect(result.first.tool_call_id).to eq('lookup-1')
+      expect(result.first.content[0]).to equal(tool.content[0])
+      expect(result.first.content[1]).to equal(tool.content[1])
+      expect(result.first.content[2].cache_control).to eq(type: 'ephemeral')
+      expect(result.first.content[2].metadata).to eq(origin: 'second')
+      expect(result.last).to equal(tool)
+      expect(Legion::JSON.dump(tool)).to eq(original)
+    end
+  end
 end

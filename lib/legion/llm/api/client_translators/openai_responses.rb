@@ -7,6 +7,8 @@ require 'legion/extensions/llm'
 require 'legion/llm/types'
 require 'legion/llm/inference/request'
 require 'legion/llm/api/client_translators/shared_extractors'
+require 'legion/llm/api/client_translators/server_tool_transcript'
+require 'legion/llm/api/client_translators/mcp_items'
 
 module Legion
   module LLM
@@ -26,8 +28,52 @@ module Legion
           extend Legion::Logging::Helper
           include Legion::Logging::Helper
           include SharedExtractors
+          include ServerToolTranscript
+          include MCPItems
 
           Canonical = Legion::Extensions::Llm::Canonical
+
+          # One usage projection for synchronous responses and stream trailers.
+          module UsageRendering
+            include SharedExtractors
+
+            private
+
+            def format_usage(tokens)
+              i = token_value(tokens, :input_tokens, :input).to_i
+              o = token_value(tokens, :output_tokens, :output).to_i
+              result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
+              details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
+              details = details.is_a?(Hash) ? details.transform_keys(&:to_sym) : {}
+              thinking = tokens.is_a?(Hash) ? (tokens[:thinking_tokens] || tokens['thinking_tokens']) : nil
+              details[:reasoning_tokens] = thinking.to_i unless thinking.nil?
+              result[:output_tokens_details] = details unless details.empty?
+              result
+            end
+          end
+
+          include UsageRendering
+
+          # Synchronous envelopes and SSE terminals render the same canonical
+          # stop state. Token exhaustion and filtering are incomplete responses.
+          module TerminalRendering
+            private
+
+            def response_terminal_state(reason)
+              case reason&.to_sym
+              when :max_tokens
+                { status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } }
+              when :content_filter
+                { status: 'incomplete', incomplete_details: { reason: 'content_filter' } }
+              when :end_turn, :stop_sequence, :tool_use, :pause_turn
+                { status: 'completed', incomplete_details: nil }
+              else
+                { status: 'failed', incomplete_details: nil }
+              end
+            end
+          end
+
+          include TerminalRendering
 
           # G24 — declares which execution-proxy contract shape this translator
           # surfaces. Consumed by the lex-llm conformance shared examples.
@@ -153,6 +199,9 @@ module Legion
             raw_msg = pipeline_response.respond_to?(:message) ? pipeline_response.message : nil
             content = extract_content_text(raw_msg)
             resolved_model = (routing[:model] || routing['model'] || model).to_s
+            stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
+            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
+            terminal_state = response_terminal_state(reason)
 
             actionable_tool_calls = build_output_tool_calls(pipeline_response)
             server_tool_items = build_output_server_tool_items(pipeline_response)
@@ -165,7 +214,7 @@ module Legion
                 id:      "msg_#{SecureRandom.hex(12)}",
                 role:    'assistant',
                 content: [{ type: 'output_text', text: content }],
-                status:  'completed'
+                status:  terminal_state[:status] == 'completed' ? 'completed' : 'incomplete'
               }
             end
 
@@ -186,25 +235,9 @@ module Legion
               created_at: Time.now.to_i,
               model:      resolved_model,
               output:     output,
-              usage:      build_usage(tokens),
-              status:     format_response_status(pipeline_response)
+              usage:      format_usage(tokens),
+              **terminal_state
             }
-          end
-
-          # One stop-state → Responses status policy (M7). The envelope's
-          # stop member is the { reason: } Hash (G3: one shape); the reason
-          # is the canonical stop enum or nil (absent).
-          def format_response_status(pipeline_response)
-            stop = pipeline_response.respond_to?(:stop) ? pipeline_response.stop : nil
-            reason = stop.is_a?(Hash) ? (stop[:reason] || stop['reason']) : nil
-            case reason&.to_sym
-            when :max_tokens
-              'incomplete'
-            when :end_turn, :stop_sequence, :tool_use, :pause_turn, :content_filter
-              'completed'
-            else
-              'failed'
-            end
           end
 
           def format_error(error, status_code: 500, type: 'server_error')
@@ -229,32 +262,30 @@ module Legion
             when :tool_call_delta
               format_tool_call_delta_chunk(canonical_chunk)
             when :done
-              { type: 'response.completed' }
+              { type: "response.#{response_terminal_state(canonical_chunk.stop_reason)[:status]}" }
             end
           end
 
-          # G24 — server-executed tool chunks surface as completed
-          # function_call output items so the client sees the call name AND
-          # result inline. Plain client-callable chunks remain plain
-          # function_call_arguments.delta events.
+          # Server-owned calls are visible transcript content, never executable
+          # function calls. Client-owned argument deltas keep their wire shape.
           def format_tool_call_delta_chunk(canonical_chunk)
             tc = canonical_chunk.tool_call
             args = tool_fragment_field(tc, :arguments) || {}
             output_index = canonical_chunk.block_index || 0
 
             if server_tool_chunk?(tc)
-              {
-                type:         'response.output_item.done',
-                output_index: output_index,
-                item:         {
-                  type:      'function_call',
-                  id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tool_fragment_field(tc, :id),
-                  name:      tool_fragment_field(tc, :name).to_s,
-                  arguments: args_as_json_string(args),
-                  status:    'completed'
-                }
-              }
+              label = tool_fragment_field(tc, :metadata)&.[](:mcp_server_label)
+              if label
+                result = tool_fragment_field(tc, :result)
+                item = mcp_item(id: tool_fragment_field(tc, :id), name: tool_fragment_field(tc, :name), arguments: args,
+                                server_label: label, result: result, error: tool_fragment_field(tc, :error),
+                                status: result.nil? ? 'in_progress' : nil)
+                return { type: result.nil? ? 'response.output_item.added' : 'response.output_item.done', output_index: output_index, item: item }
+              end
+              text = server_tool_call_text(id: tool_fragment_field(tc, :id), name: tool_fragment_field(tc, :name), arguments: args)
+              result = tool_fragment_field(tc, :result)
+              text += server_tool_result_text(id: tool_fragment_field(tc, :id), result: result) unless result.nil?
+              { type: 'response.output_text.delta', output_index: output_index, delta: text }
             else
               { type:         'response.function_call_arguments.delta',
                 output_index: output_index,
@@ -276,6 +307,10 @@ module Legion
           # following the OpenAI Responses API spec.
           class Events
             include Legion::Logging::Helper
+            include UsageRendering
+            include TerminalRendering
+            include ServerToolTranscript
+            include MCPItems
 
             def initialize(out:, request_id:, model:, conv_id: nil)
               @out = out
@@ -368,8 +403,16 @@ module Legion
             end
 
             def on_tool_call_open(block_index:, tool_call:, server_tool:)
-              _ = server_tool
               tc_id = tool_call[:id] || "call_#{SecureRandom.hex(12)}"
+              if server_tool
+                @pending_tool_calls[block_index] = {
+                  id: tc_id, name: tool_call[:name].to_s, arguments_str: +'', server_tool: true,
+                  server_label: tool_call.dig(:metadata, :mcp_server_label)
+                }
+                open_mcp_call(@pending_tool_calls[block_index]) if @pending_tool_calls[block_index][:server_label]
+                return
+              end
+
               idx = @output_items.length
               item = { id: tc_id, type: 'function_call', name: tool_call[:name].to_s,
                        call_id: tc_id, arguments: '', status: 'in_progress' }
@@ -377,9 +420,8 @@ module Legion
               @pending_tool_calls[block_index] = {
                 id:            tc_id,
                 name:          tool_call[:name].to_s,
-                arguments_str: '',
-                output_index:  idx,
-                args_emitted:  +''
+                arguments_str: +'',
+                output_index:  idx
               }
               emit('response.output_item.added', {
                      type: 'response.output_item.added', sequence_number: next_seq,
@@ -391,26 +433,36 @@ module Legion
               state = @pending_tool_calls[block_index]
               return if state.nil?
 
-              # If the assembler hands us a cumulative string (buffered close)
-              # only emit the diff vs already emitted.
-              new_part = if partial_arguments_json.start_with?(state[:args_emitted])
-                           partial_arguments_json[state[:args_emitted].length..]
-                         else
-                           partial_arguments_json
-                         end
-              return if new_part.to_s.empty?
+              return if partial_arguments_json.empty?
 
-              state[:args_emitted] << new_part
-              state[:arguments_str] = state[:args_emitted]
+              state[:arguments_str] << partial_arguments_json
+              if state[:server_label]
+                emit_mcp_event('response.mcp_call_arguments.delta', state, delta: partial_arguments_json)
+                return
+              end
+              return if state[:server_tool]
+
               emit('response.function_call_arguments.delta', {
                      type: 'response.function_call_arguments.delta', sequence_number: next_seq,
-                     output_index: state[:output_index], item_id: state[:id], delta: new_part
+                     output_index: state[:output_index], item_id: state[:id], delta: partial_arguments_json
                    })
             end
 
             def on_tool_call_close(block_index:)
               state = @pending_tool_calls[block_index]
               return if state.nil?
+
+              if state[:server_label]
+                emit_mcp_event('response.mcp_call_arguments.done', state, arguments: state[:arguments_str])
+                @output_items[state[:output_index]][:arguments] = state[:arguments_str].dup
+                @output_items[state[:output_index]][:status] = 'calling'
+                return
+              end
+              if state[:server_tool]
+                text = server_tool_call_text(id: state[:id], name: state[:name], arguments: state[:arguments_str])
+                on_text_delta(block_index: block_index, text: text)
+                return
+              end
 
               emit('response.function_call_arguments.done', {
                      type: 'response.function_call_arguments.done', sequence_number: next_seq,
@@ -430,20 +482,36 @@ module Legion
               nil
             end
 
-            def on_server_tool_result(block_index:, tool_call_id:, result_text:)
-              _ = block_index
-              idx = @output_items.length
-              item = { id: "fco_#{tool_call_id}", type: 'function_call_output',
-                       call_id: tool_call_id, output: result_text.to_s, status: 'completed' }
+            def on_server_tool_result(block_index:, tool_call_id:, result_text:, error: nil)
+              state = @pending_tool_calls.values.find { |call| call[:id] == tool_call_id }
+              if state && state[:server_label]
+                item = mcp_item(id: state[:id], name: state[:name], arguments: state[:arguments_str],
+                                server_label: state[:server_label], result: result_text, error: error)
+                @output_items[state[:output_index]] = item
+                emit_mcp_event(error ? 'response.mcp_call.failed' : 'response.mcp_call.completed', state)
+                emit('response.output_item.done', {
+                       type: 'response.output_item.done', sequence_number: next_seq,
+                       output_index: state[:output_index], item: item
+                     })
+                return
+              end
+              on_text_delta(block_index: block_index, text: server_tool_result_text(id: tool_call_id, result: result_text))
+            end
+
+            def open_mcp_call(state)
+              close_thinking_item
+              state[:output_index] = @output_items.length
+              item = mcp_item(id: state[:id], name: state[:name], arguments: '', server_label: state[:server_label], status: 'in_progress')
               @output_items << item
               emit('response.output_item.added', {
                      type: 'response.output_item.added', sequence_number: next_seq,
-                     output_index: idx, item: item
+                     output_index: state[:output_index], item: item
                    })
-              emit('response.output_item.done', {
-                     type: 'response.output_item.done', sequence_number: next_seq,
-                     output_index: idx, item: item
-                   })
+              emit_mcp_event('response.mcp_call.in_progress', state)
+            end
+
+            def emit_mcp_event(type, state, **fields)
+              emit(type, { type: type, sequence_number: next_seq, item_id: state[:id], output_index: state[:output_index], **fields })
             end
 
             def on_keep_alive
@@ -460,6 +528,7 @@ module Legion
 
             def on_done(stop_reason:, usage:, model:)
               close_thinking_item
+              terminal_state = response_terminal_state(stop_reason)
 
               if @msg_opened
                 emit('response.output_text.done', {
@@ -471,7 +540,8 @@ module Legion
                        output_index: @msg_index, content_index: 0, item_id: @msg_id,
                        part: { type: 'output_text', text: @full_text, annotations: [] }
                      })
-                completed_item = { id: @msg_id, type: 'message', role: 'assistant', status: 'completed',
+                completed_item = { id: @msg_id, type: 'message', role: 'assistant',
+                                   status: terminal_state[:status] == 'completed' ? 'completed' : 'incomplete',
                                    content: [{ type: 'output_text', text: @full_text, annotations: [] }] }
                 emit('response.output_item.done', {
                        type: 'response.output_item.done', sequence_number: next_seq,
@@ -480,18 +550,15 @@ module Legion
                 @output_items[@msg_index] = completed_item
               end
 
-              # Responses protocol: every turn terminates with response.completed
-              # (status completed). Client-callable function_call items ride in
-              # output[]; the client executes them and continues via
-              # function_call_output. requires_action / response.done are Assistants
-              # API concepts that real Responses clients (Codex) reject — emitting
-              # them closes the stream "before response.completed".
-              _ = stop_reason
-              emit('response.completed', {
-                     type: 'response.completed', sequence_number: next_seq,
+              # Client function handoffs complete normally. Truncated or failed
+              # turns use their documented terminal event and retain any earlier
+              # completed server-tool items in the final output.
+              event_type = "response.#{terminal_state[:status]}"
+              emit(event_type, {
+                     type: event_type, sequence_number: next_seq,
                      response: {
                        id: @request_id, object: 'response', created_at: @created_at,
-                       status: 'completed', model: model.to_s,
+                       **terminal_state, model: model.to_s,
                        output: @output_items, usage: format_usage(usage)
                      }
                    })
@@ -551,14 +618,6 @@ module Legion
                    })
               @thinking_state = nil
             end
-
-            def format_usage(usage)
-              return { input_tokens: 0, output_tokens: 0, total_tokens: 0 } if usage.nil?
-
-              i = usage[:input_tokens].to_i
-              o = usage[:output_tokens].to_i
-              { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            end
           end
 
           private
@@ -587,7 +646,7 @@ module Legion
             raw.each do |m|
               role = (m[:role] || m['role']).to_s
               if role == 'system'
-                system_parts << (m[:content] || m['content']).to_s
+                system_parts << extract_system_text(m[:content] || m['content'])
               else
                 messages << m
               end
@@ -602,7 +661,7 @@ module Legion
               }.compact
             end
 
-            system = system_parts.reject(&:empty?).join("\n\n")
+            system = system_parts.compact.reject(&:empty?).join("\n\n")
             [system.empty? ? nil : system, normalized]
           end
 
@@ -613,6 +672,11 @@ module Legion
             input.each do |item|
               item = symbolize(item)
               case item[:type].to_s
+              when 'mcp_call'
+                flush_pending_tool_calls(messages, pending_tool_calls)
+                append_mcp_history(messages, item)
+              when 'image_generation_call'
+                raise Legion::LLM::Errors::InvalidRequest, 'Generated image history is not supported'
               when 'function_call'
                 pending_tool_calls << {
                   id:        item[:call_id] || item[:id],
@@ -647,6 +711,16 @@ module Legion
                 next unless role
 
                 role = 'system' if role == 'developer'
+
+                if role == 'system'
+                  # System items keep their RAW content — build_system_and_messages
+                  # converges them through the shared extract_system_text owner
+                  # (the "\n\n" join). Canonicalizing here would pre-collapse the
+                  # fragments with the message-content join before the system
+                  # owner ever sees them.
+                  messages << { role: role, content: item[:content] }
+                  next
+                end
 
                 content = canonicalize_content_parts(item[:content])
                 content = content.to_s if content && !content.is_a?(Array)
@@ -691,9 +765,22 @@ module Legion
               # assistant_content carries text that arrived AFTER the calls in the
               # same turn — keep it ON the tool_calls message so the turn stays one
               # message and the following tool results remain adjacent.
-              messages << { role: 'assistant', content: assistant_content.to_s, tool_calls: tool_calls }
+              messages << { role: 'assistant', content: assistant_content || '', tool_calls: tool_calls }
             end
             pending.clear
+          end
+
+          def append_mcp_history(messages, item)
+            raise Legion::LLM::Errors::InvalidRequest, 'MCP history requires a completed result or error' if item[:output].nil? && item[:error].nil?
+            raise Legion::LLM::Errors::InvalidRequest, 'MCP history requires id, name, and server_label' if item[:id].to_s.empty? || item[:name].to_s.empty? || item[:server_label].to_s.empty?
+
+            arguments = item[:arguments].is_a?(String) ? safe_parse_json(item[:arguments]) : item[:arguments]
+            output = item[:output] || Legion::JSON.dump(item[:error])
+            call = { id: item[:id], name: item[:name], arguments: arguments, source: :mcp,
+                     status: item[:error] ? :error : :success, result: output, error: item[:error],
+                     metadata: { mcp_server_label: item[:server_label] } }
+            messages << { role: 'assistant', content: '', tool_calls: [call] }
+            messages << { role: 'tool', tool_call_id: item[:id], content: output }
           end
 
           def safe_parse_json(str)
@@ -813,50 +900,26 @@ module Legion
             end
           end
 
-          # G24 — emit completed function_call + function_call_output items
-          # for every resolved server-side tool. The model must see the call
-          # happened AND the client must NOT re-execute, so we pair a
-          # `status: 'completed'` function_call with a `function_call_output`
-          # carrying the tool result — the same shape Codex sends back on the
-          # next turn, so the surface is round-trippable through
-          # parse_request without invention.
+          # Server executions remain visible in ordinary assistant content;
+          # function_call is reserved for tools the client must execute.
           def build_output_server_tool_items(pipeline_response)
             tools = pipeline_response.respond_to?(:tools) ? pipeline_response.tools : nil
             return [] unless tools.respond_to?(:any?) && tools.any?
 
             tools.flat_map do |tc|
               next [] unless server_tool_resolved?(tc)
+              if tc.metadata[:mcp_server_label]
+                next [mcp_item(id: tc.id, name: tc.name, arguments: tc.arguments, server_label: tc.metadata[:mcp_server_label],
+                               result: tc.result, error: tc.error)]
+              end
 
-              # G3: the envelope carries Array<Canonical::ToolCall> — member
-              # reads only (the former respond_to?/Hash dual shape was the
-              # split-world seam).
               [
                 {
-                  type:      'function_call',
-                  id:        "fc_#{SecureRandom.hex(12)}",
-                  call_id:   tc.id,
-                  name:      tc.name.to_s,
-                  arguments: args_as_json_string(tc.arguments),
-                  status:    'completed'
-                },
-                {
-                  type:    'function_call_output',
-                  call_id: tc.id,
-                  output:  serialize_server_tool_result(tc.result),
-                  status:  'completed'
+                  type: 'message', id: "msg_#{SecureRandom.hex(12)}", role: 'assistant', status: 'completed',
+                  content: [{ type: 'output_text', text: server_tool_exchange_text(tool_call: tc), annotations: [] }]
                 }
               ]
             end
-          end
-
-          def serialize_server_tool_result(result)
-            return '' if result.nil?
-            return result if result.is_a?(String)
-
-            Legion::JSON.dump(result)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_responses.serialize_server_tool_result')
-            result.to_s
           end
 
           # The canonical ToolCall.source is the closed dispatch-type enum —
@@ -889,17 +952,6 @@ module Legion
               content: [{ type: 'output_text', text: text }],
               status:  'completed'
             }]
-          end
-
-          def build_usage(tokens)
-            i = token_value(tokens, :input_tokens, :input).to_i
-            o = token_value(tokens, :output_tokens, :output).to_i
-            result = { input_tokens: i, output_tokens: o, total_tokens: i + o }
-            # G3: the envelope's tokens member is a plain Hash (or {}) — one
-            # shape, no dual reader.
-            details = tokens.is_a?(Hash) ? (tokens[:output_tokens_details] || tokens['output_tokens_details']) : nil
-            result[:output_tokens_details] = details if details.is_a?(Hash) && !details.empty?
-            result
           end
         end
       end

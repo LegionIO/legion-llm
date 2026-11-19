@@ -317,11 +317,26 @@ module Legion
               log.info "[llm][native_tool_loop] action=tool_choice_forced forced_tool=#{explicit_choice} provider=#{@resolved_provider}"
               normalized_choice = explicit_choice
             end
+          elsif native_named_tool_choice_completed?(choice: normalized_choice)
+            normalized_choice = :auto
           end
           prefs[:choice] = normalized_choice if normalized_choice
           prefs[:calls] = calls if calls
           log.debug "[llm][native_tool_loop] action=tool_prefs_resolved choice=#{prefs[:choice] || 'none'} calls=#{prefs[:calls] || 'none'}" unless prefs.empty?
           prefs.empty? ? nil : prefs
+        end
+
+        def native_named_tool_choice_completed?(choice:)
+          return false if choice.nil? || %w[auto none required].include?(choice.to_s)
+
+          name = choice.to_s
+          @pending_tool_history_mutex.synchronize do
+            @pending_tool_history.any? do |entry|
+              call = entry[:typed_call]
+              call && call.name == name && call.source && call.source != :client &&
+                !call.result.nil? && (call.success? || call.error?)
+            end
+          end
         end
 
         def normalize_native_tool_choice(choice)
@@ -339,6 +354,12 @@ module Legion
         # that only emit structured tool calls when a tool choice is forced;
         # it is not a routing decision. Gated by llm.tools.explicit_tool_choice.
         def explicit_native_tool_choice
+          # Pre-routing state (directly-constructed executor) has no resolved
+          # provider — with no provider there is no capability to check, so
+          # explicit choice is unavailable. Registry.for requires a provider
+          # name; nil is a caller defect, not a lookup miss.
+          return if @resolved_provider.nil?
+
           return unless Legion::Settings[:llm][:tools][:explicit_tool_choice] == true
 
           ext = Call::Registry.for(@resolved_provider, instance: @resolved_instance)

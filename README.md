@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.14.0-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.20-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -60,6 +60,8 @@ The result: **any client → any provider, in every direction.** A Claude Code s
 ### Execution proxy, not a passthrough
 
 To the **client**, Legion looks like a server-side execution surface: LegionIO-resolved tools run *server-side* and appear in canonical server-tool shapes — the client never sees a pending action for a tool Legion already executed. To the **provider**, Legion looks like the client: the same tool-use/tool-result exchange shows up in the next turn in that provider's wire format, so the model always knows what happened. This "always translate, never passthrough" contract is verified on every test run by an in-process matrix harness that replays the full client × scenario matrix in milliseconds.
+
+Local tools use the MCP SDK adapter in-process. `/v1/responses` exposes these executions as documented `mcp_call` items with arguments, results, and streaming lifecycle events. `/v1/messages` retains its server-tool blocks; `/v1/chat/completions` includes a visible call/result transcript in assistant content. Tool execution makes no HTTP request back into the daemon.
 
 ### Context curation that actually works
 
@@ -164,12 +166,83 @@ response = client.messages.create(
 
 Requests flow through the full Inference pipeline — routing, metering, audit, quality checks — then the response is translated back into the caller's expected format.
 
+### Image inputs
+
+Anthropic `image` source envelopes, OpenAI Chat `image_url` parts, and Responses
+`input_image` parts normalize to canonical image blocks. Supported sources are
+absolute HTTP(S) URLs and nonempty base64 data with an explicit image MIME type.
+MIME types are lowercased and `image/jpg` becomes `image/jpeg`. ASCII whitespace
+and omitted base64 padding are normalized; invalid encodings still return 400.
+Image formats such as HEIC remain available to providers that support them;
+the selected provider determines format support.
+
+Mixed text/image order is preserved. Anthropic `tool_result` images retain their
+tool-call association. Image `detail` and `cache_control` survive the canonical
+inference boundary; their provider-wire rendering belongs to the selected
+`lex-llm-*` adapter. Image requests require a vision-capable routing candidate.
+
+Malformed sources, provider-specific `file_id` references, Responses
+`image_generation_call` history, and unsupported content block types are rejected with HTTP 400
+(`invalid_request_error`) before an event stream opens. They are not silently
+converted to empty images or discarded.
+
+### Canonical execution and routing ownership
+
+Equivalent text fragments preserve their exact whitespace across all three client
+dialects. Plain text converges to one string; annotated text and mixed media retain
+their ordered canonical blocks.
+
+Text-block citations and metadata survive ingress without changing the original
+client history. System instructions use the canonical string contract, including
+cached OpenAI Chat system text. History reduction applies leading-thinking removal
+and `tools.result_max_dispatch_chars` to both strings and annotated text blocks;
+surviving blocks retain their metadata and media remain in order. The tool-result
+cap is shared across text blocks in a message, not applied separately to each block.
+
+`Router.new(request:, operation:, body_model:, **)` creates one Router for the
+logical request. Its included `Routing::Requirements` module initializes required
+capabilities, input/output bounds, modality, explicit pins, the body-model hint
+decision and the attempt limit once during construction. The shared
+`Legion::Extensions::Llm::Routing::RequestRequirements` contract validates and
+freezes those values before they become Router instance fields. Callers use direct
+readers such as `router.maximum_attempts` and `router.required_capabilities`; there
+is no standalone requirements builder or nested requirements API.
+
+Canonical tool history requires tool capability even when no new tool definitions
+are supplied. Request policy uses the settings generation captured at ingress.
+Each lane decision reads one immutable live Inventory snapshot; filters compare
+the Router's request facts with published evidence, ranking consumes stored weights,
+and dispatch preserves the resulting exact Selection. Retries retain the same
+Router, immutable facts and request-local attempt state.
+
+Fleet serialization preserves canonical media source enums through the shared
+rehydration boundary. Signed binding/media tampering and Inventory mismatches
+raise before provider execution. Boundary regressions exercise real provider
+callables and signed worker execution with only external HTTP/key provisioning
+substituted; they do not certify live model-service availability.
+
 ### Streaming
 
 Both formats supported with correct SSE shapes:
 - **OpenAI**: `data: {"choices":[{"delta":{"content":"..."}}]}` chunks, terminated by `data: [DONE]`
 - **Anthropic**: Typed events — `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`
 - **Native**: `/api/llm/inference` streams `text-delta`, optional `thinking-delta` events when `include_thinking: true`, tool lifecycle events, and a final `done` event. Structured provider content blocks are flattened to plain text in both streaming and non-streaming native responses so `content` remains a string for daemon clients.
+
+Server-executed tool calls and results reach the shared stream observer as typed
+Canonical tool calls when execution starts and completes. Responses and Anthropic
+emit their corresponding lifecycle events before any subsequent model round
+finishes; finalization does not replay already delivered events. Client-owned
+calls never receive fabricated server results.
+
+Tool-call fragments retain their authoritative IDs, names and incremental JSON
+arguments. Provider-index correlation resets for each completion. An explicit
+named tool choice remains enforced until the matching server call completes,
+then continuation uses automatic choice without mutating the original request.
+Typed Hash arguments are replaceable snapshots: their final value is emitted at
+tool-call completion. Raw JSON argument fragments continue streaming incrementally;
+an intermediate snapshot cannot prematurely close the client's argument JSON.
+Anthropic tool blocks start with an empty `input` object; their arguments arrive
+through `input_json_delta`, never through a premature opening snapshot.
 
 ### API Authentication
 
@@ -357,11 +430,32 @@ result = Legion::LLM.chat(
 
 ```ruby
 embedding = Legion::LLM.embed("some text to embed")
-embedding.vectors  # -> Array of floats
+embedding[:vector]  # -> Array of numbers
+embedding[:embedding_provenance][:space_id]  # -> Stable identity for comparison
 
 # Specific model
 embedding = Legion::LLM.embed("text", model: "text-embedding-3-small")
 ```
+
+Fresh, batch, and cached Ruby results include `embedding_provenance` with the
+routed provider/model, selected instance, authoritative model revision when
+available, actual dimensions, document/query prefix pair, normalization, task,
+and `space_id`. Document and query tasks share a space when their prefix policy
+matches. Instances share a space only when they publish matching revision
+evidence; unknown revisions remain isolated by instance. Persist this provenance
+with vectors and compare only compatible spaces.
+
+The embedding path validates every vector and chunk before returning a result.
+Malformed output is retried through the existing Router policy rather than
+silently dropping chunks. Legacy cache entries without provenance and entries
+with incompatible provenance or invalid vectors are regenerated.
+
+Embedding metering counts served request workload on both cache misses and cache
+hits. A cache hit preserves the cached input-token count in `input_tokens` and
+`total_tokens`, while emitting `cache_hit: true`, `output_tokens: 0`, and
+`cost_usd: 0`. Ledger can use those tokens to calculate counterfactual spend and
+framework savings without charging for another provider execution. Missing
+provider usage remains zero; embedding dimensions are not counted as output tokens.
 
 ### Tool Use
 
@@ -592,6 +686,36 @@ Legion::LLM.chat(
 ```
 
 System callers (type: `:system`) derive the `:system` profile, which skips governance steps to prevent recursion.
+
+### Prompt audit capture
+
+Prompt audit capture is a projection, not a replacement for inference history:
+
+- `llm.compliance.audit_max_messages` retains the newest 20 messages by default.
+- `llm.compliance.audit_max_binary_data_bytes` replaces individual binary values
+  larger than 131,072 bytes with `binary_fingerprint` metadata: byte count,
+  SHA256, MIME type, and original source type. These fingerprints are not
+  reusable base64 image data.
+- `transport.max_payload_bytes` also bounds the complete attributed prompt
+  event and its encoded/encrypted body. Aggregate overflow removes remaining
+  binary content first, fingerprints oversized message fields and bulky event
+  fields, then omits oldest messages if necessary. Message roles and tool-result
+  associations survive field compaction. Essential identifiers, routing, and
+  usage remain; an envelope that still cannot fit is dropped and logged.
+
+The emitted `capture` object reports `full` versus `projected` mode, message
+counts, binary redaction counts/bytes, omitted-field count, and reasons.
+`request_content_hash` identifies the full original semantic message history,
+including media and tool state, independently of projection or generated
+message IDs. The separate embedding/RAG content hash is unchanged.
+
+The post-response timeline records `published`, `spooled`, `disabled`, or `dropped`.
+`spooled` means transport retained the event for later delivery; it does not
+claim broker acceptance or successful delivery.
+GAIA observes the constructed local audit event even if delivery is disabled
+or dropped; additional transport-only compaction can make that local projection
+differ from the transmitted one. Consumers should use the transmitted `capture`
+metadata rather than assuming every event contains the full request.
 
 ### Routing
 
@@ -1017,11 +1141,18 @@ bundle exec rubocop -A
 | `legion-json` | Legion JSON serialization |
 | `legion-logging` | Logging |
 | `legion-settings` | Configuration defaults and file overrides |
-| `legion-transport` (>= 1.4.14) | AMQP transport for fleet dispatch, metering, and audit |
+| `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.5.4) | Provider-neutral contract, `Canonical::Request`/`Canonical::Response`, model offerings, response normalization, fleet envelopes, and responder-side fleet execution helpers |
+| `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
+
+For the coordinated LLM release, publish shared `lex-llm` first, the provider
+gems next, and `legion-llm` last. The current targets are `lex-llm 0.8.8`,
+`lex-llm-vllm 0.4.9`, `lex-llm-anthropic 0.3.8`, and `lex-llm-bedrock 0.5.10`.
+These companion versions are published. All CI runs resolve published gems;
+temporary companion commit pins have been removed. Release depends on CI passing
+against those published dependencies.
 
 ## License
 

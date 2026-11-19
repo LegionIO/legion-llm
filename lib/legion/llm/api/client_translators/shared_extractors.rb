@@ -1,12 +1,16 @@
 # frozen_string_literal: true
 
+require 'uri'
+require 'legion/llm/errors'
+
 module Legion
   module LLM
     module API
       module ClientTranslators
-        # Token-count and thinking-text extraction shared by all client translators.
-        # Single source of truth — replaces the 3-way duplicate that lived in
-        # AnthropicMessages, OpenAIChat, and OpenAIResponses (P6 dedup).
+        # System-text, token-count, and thinking-text extraction shared by all
+        # client translators. Single source of truth — replaces the 3-way
+        # duplicate that lived in AnthropicMessages, OpenAIChat, and
+        # OpenAIResponses (P6 dedup).
         module SharedExtractors
           # Client-wire params spellings per canonical member (03 O03a).
           # Canonical::Params accepts canonical keys and types ONLY; the
@@ -48,7 +52,7 @@ module Legion
           def canonicalize_content_parts(parts)
             return parts unless parts.is_a?(Array)
 
-            parts.map do |part|
+            normalized = parts.map do |part|
               if part.is_a?(String)
                 canonical_content_block({ type: 'text', text: part })
               elsif part.is_a?(Hash)
@@ -57,42 +61,101 @@ module Legion
                 part
               end
             end
+            canonical_message_content(parts: normalized)
           end
 
-          # One client content part → one canonical content block. Type
-          # aliases (input_text/output_text → text) and the OpenAI image_url
-          # envelope (→ image with data/media_type/source_type) are the two
-          # dialect shapes; anything else passes through and the canonical
-          # validation raises loudly on a wrong type.
+          # Text fragments carry their own whitespace. Collapse only unannotated
+          # text; media, cache boundaries and other block semantics stay ordered.
+          def canonical_message_content(parts:)
+            plain_text = parts.all? do |part|
+              part.is_a?(Hash) && part[:type].to_s == 'text' &&
+                part.each_key.all? { |key| %i[type text].include?(key) }
+            end
+            return parts unless plain_text
+
+            parts.map { |part| part[:text] }.join
+          end
+
+          # Client image spellings converge to the provider-neutral image block.
           def canonical_content_block(part)
             case part[:type].to_s
             when 'text', 'input_text', 'output_text'
-              { type: 'text', text: part[:text].to_s }
-            when 'image_url'
+              normalized = part.merge(type: 'text', text: part[:text].to_s)
+              normalized.delete(:cache_control) if normalized[:cache_control].nil?
+              normalized[:metadata] = part[:metadata].dup if part[:metadata].is_a?(Hash)
+              normalized
+            when 'image_url', 'input_image'
               canonical_image_block(part)
+            when 'image_generation_call'
+              raise Legion::LLM::Errors::InvalidRequest, 'Generated image history is not supported'
             else
-              part
+              return part if Legion::Extensions::Llm::Canonical::ContentBlock::CONTENT_BLOCK_TYPES.any? { |type| type.to_s == part[:type].to_s }
+
+              raise Legion::LLM::Errors::InvalidRequest, "Unsupported content block type: #{part[:type]}"
             end
           end
 
           def canonical_image_block(part)
-            image_url = part[:image_url]
-            image_url = image_url.is_a?(Hash) ? (image_url[:url] || image_url['url']) : image_url
-            url = image_url.to_s
-            if url.start_with?('data:')
-              media_type, data = url.sub('data:', '').split(',', 2)
-              {
-                type:        'image',
-                data:        data,
-                # Strip any ;parameters (e.g. ";base64") from the media type. Uses a
-                # plain string split rather than /;.*$/ — the latter is a polynomial
-                # ReDoS (rb/polynomial-redos) on attacker-controlled data URLs.
-                media_type:  (media_type || '').split(';', 2).first.to_s,
-                source_type: :base64
-              }
+            raise Legion::LLM::Errors::InvalidRequest, 'Image file_id references are not supported' if part.key?(:file_id)
+
+            envelope = part[:image_url]
+            envelope = envelope.transform_keys(&:to_sym) if envelope.is_a?(Hash)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image file_id references are not supported' if envelope.is_a?(Hash) && envelope.key?(:file_id)
+
+            url = envelope.is_a?(Hash) ? envelope[:url] : envelope
+            detail = envelope.is_a?(Hash) ? envelope[:detail] : part[:detail]
+            raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be a nonempty string' unless url.is_a?(String) && !url.empty?
+
+            image = if url.start_with?('data:')
+                      image_data_url_block(url: url)
+                    else
+                      image_source_block(source_type: :url, data: url)
+                    end
+            image.merge(detail: detail, cache_control: part[:cache_control]).compact
+          end
+
+          def image_data_url_block(url:)
+            separator = url.index(',')
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed image data URL' unless separator
+
+            header = url.byteslice(5, separator - 5)
+            media_type, encoding = header.split(';', 2)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image data URL must use base64 encoding' unless encoding == 'base64'
+
+            image_source_block(source_type: :base64, media_type: media_type, data: url.byteslice((separator + 1)..))
+          end
+
+          def image_source_block(source_type:, data:, media_type: nil)
+            raise Legion::LLM::Errors::InvalidRequest, 'Image source must be a nonempty string' unless data.is_a?(String) && !data.empty?
+
+            case source_type
+            when :base64
+              media_type = media_type.to_s.downcase
+              media_type = 'image/jpeg' if media_type == 'image/jpg'
+              raise Legion::LLM::Errors::InvalidRequest, 'Image base64 source requires an image MIME type' unless %r{\Aimage/[a-z0-9][a-z0-9.+_-]*\z}.match?(media_type)
+
+              data = normalized_image_base64(data: data)
+            when :url
+              uri = URI.parse(data)
+              raise Legion::LLM::Errors::InvalidRequest, 'Image URL must be an absolute HTTP(S) URL' unless uri.is_a?(URI::HTTP) && uri.host && !uri.host.empty?
             else
-              { type: 'image', data: url, source_type: 'url' }
+              raise Legion::LLM::Errors::InvalidRequest, 'Unsupported image source type'
             end
+
+            { type: 'image', data: data, media_type: media_type, source_type: source_type }.compact
+          rescue URI::InvalidURIError
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed image URL'
+          end
+
+          def normalized_image_base64(data:, **)
+            normalized = data.match?(/[ \t\r\n\f\v]/) ? data.delete(" \t\r\n\f\v") : data
+            normalized += '=' * ((4 - (normalized.bytesize % 4)) % 4) unless normalized.include?('=')
+            # Validate canonical padding and unused bits without decoding a large
+            # image. Possessive quartets keep scanning linear in payload size.
+            valid = !normalized.empty? && %r{\A(?:[A-Za-z0-9+/]{4})*+(?:[A-Za-z0-9+/][AQgw]==|[A-Za-z0-9+/]{2}[AEIMQUYcgkosw048]=)?\z}.match?(normalized)
+            raise Legion::LLM::Errors::InvalidRequest, 'Malformed base64 image data' unless valid
+
+            normalized
           end
 
           # The pipeline envelope's tokens member is a plain Hash (or {} when
@@ -110,6 +173,33 @@ module Legion
           # G3: the envelope carries the provider's Canonical::Thinking — the
           # thinking text is the .content member (the former String/Hash/
           # duck-typed branches were the split-world seam).
+          # System content converges to the canonical string contract
+          # (release v0.16.9 convention, RULES.md rule 13): text fragments
+          # joined with "\n\n". Cache annotations and non-text parts are
+          # dropped at this client edge — the joined string is what every
+          # provider consumes, so no block structure or Ruby inspect output
+          # may ever reach the prompt. Every client dialect and client-facing
+          # route uses this one owner; per-translator joins are how the
+          # post-v0.16.9 divergence happened.
+          def extract_system_text(sys)
+            return nil if sys.nil?
+            return sys if sys.is_a?(String)
+
+            if sys.is_a?(Array)
+              sys.filter_map do |part|
+                next part if part.is_a?(String)
+                next unless part.is_a?(Hash)
+
+                normalized = part.transform_keys { |key| key.respond_to?(:to_sym) ? key.to_sym : key }
+                next unless text_content_type?(normalized[:type])
+
+                normalized[:text].to_s
+              end.join("\n\n")
+            else
+              sys.to_s
+            end
+          end
+
           def extract_thinking_text(value)
             return '' if value.nil?
 

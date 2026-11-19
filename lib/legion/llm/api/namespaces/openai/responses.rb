@@ -27,10 +27,7 @@ module Legion
                 body = parse_request_body
 
                 input = body[:input]
-                unless input.is_a?(Array) || input.is_a?(String)
-                  return openai_error('input is required (string or array)',
-                                      type: 'invalid_request_error', status_code: 400)
-                end
+                raise Legion::LLM::Errors::InvalidRequest, 'input is required (string or array)' unless input.is_a?(Array) || input.is_a?(String)
 
                 translator = Legion::LLM::API::ClientTranslators::OpenAIResponses.new
                 canonical_request = translator.parse_request(body, env)
@@ -126,6 +123,9 @@ module Legion
                     Legion::JSON.dump(formatted)
                   end
                 end
+              rescue Legion::LLM::Errors::InvalidRequest => e
+                handle_exception(e, level: :warn, handled: true, operation: 'llm.api.namespaces.openai.responses.invalid_request')
+                openai_error(e.message, type: 'invalid_request_error', status_code: 400)
               rescue Legion::LLM::Errors::NoLaneAvailable => e
                 translate_no_lane_available(e, operation: 'llm.api.namespaces.openai.responses.no_lane')
               rescue Legion::LLM::Errors::EscalationExhausted => e

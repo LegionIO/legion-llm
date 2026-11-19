@@ -98,6 +98,7 @@ RSpec.describe 'Codex CLI conformance', :ssot_v3, type: :conformance do
         # G3: the envelope's message member is the canonical rendering
         # projection (a Hash), matching the real boundary shape (R15).
         message: { role: :assistant, content: 'Hello world!' },
+        stop:    { reason: :end_turn },
         tools:   []
       )
     end

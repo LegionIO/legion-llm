@@ -33,6 +33,7 @@ RSpec.describe 'Codex CLI conformance', :integration do
     double('Response',
            routing: { model: 'legionio' },
            tokens:  { input_tokens: 12, output_tokens: 38 },
+           stop:    { reason: :end_turn },
            tools:   [])
   end
 

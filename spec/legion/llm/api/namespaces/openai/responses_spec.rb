@@ -114,6 +114,7 @@ RSpec.describe 'Namespaces::OpenAI::Responses' do
         pipeline_response = double('Response',
                                    routing: { model: 'legionio' },
                                    tokens:  { input_tokens: 5, output_tokens: 10 },
+                                   stop:    { reason: :end_turn },
                                    tools:   [])
         allow(executor_double).to receive(:stream_preflight!).and_return(nil)
         allow(executor_double).to receive(:call_stream) do |&block|

@@ -3,6 +3,7 @@
 require 'digest'
 require 'legion/logging/helper'
 require_relative '../content_hash'
+require_relative '../audit_projection'
 require_relative '../publisher_identity'
 module Legion
   module LLM
@@ -29,6 +30,11 @@ module Legion
           audit_data = response.audit || {}
           provider_payload = hash_value(audit_data, :provider_payload) || {}
 
+          fingerprints = {}.compare_by_identity
+          request_digest = semantic_message_digest(messages: request.messages, fingerprints: fingerprints)
+          capture = Legion::LLM::AuditProjection.capture_metadata(message_count: request.messages.size)
+          capture[:request_digest_algorithm] = 'sha256/canonical-messages-v1'
+
           event = {
             request_id:        response.request_id,
             conversation_id:   response.conversation_id,
@@ -44,7 +50,7 @@ module Legion
             timeline:          compact_timeline(response.timeline),
             classification:    response.classification,
             tracing:           response.tracing,
-            messages:          current_turn_messages(request.messages),
+            messages:          audit_messages(messages: request.messages, capture: capture),
             response_content:  msg_content,
             response_thinking: response.thinking,
             tools_used:        tools_data,
@@ -52,7 +58,7 @@ module Legion
             request_type:      request.respond_to?(:request_type) ? request.request_type : 'chat',
             tier:              hash_value(response.routing, :tier),
             message_context:   build_message_context(request: request, response: response)
-          }
+          }.merge(capture: capture)
           # task_id rides on the request (the envelope message carries no
           # task identity of its own).
           event[:task_id] = request.respond_to?(:task_id) ? request.task_id : nil
@@ -66,24 +72,25 @@ module Legion
           event[:route_attempts] = Array(hash_value(routing, :route_attempts)).size
           event[:route_attempt_details] = hash_value(routing, :route_attempts) if hash_value(routing, :route_attempts)
           event[:escalation_chain] = hash_value(routing, :escalation_chain) if hash_value(routing, :escalation_chain)
-          event[:request_content_hash] = content_hash(request.messages)
+          event[:request_content_hash] = request_digest
           event[:response_content_hash] = content_hash(msg_content)
           provider_metrics = extract_provider_metrics(provider_payload)
           event[:provider_metrics] = provider_metrics if provider_metrics.any?
           event[:context_accounting] = hash_value(audit_data, :context_accounting) if hash_value(audit_data, :context_accounting)
           event[:agent_id] = request.agent_id if request.respond_to?(:agent_id) && request.agent_id
           event[:node_id] = Legion::LLM.node_id if Legion::LLM.respond_to?(:node_id) && Legion::LLM.node_id
-          event.compact
-          event
+          projected = Legion::LLM::AuditProjection.project_value(value: event, binary_limit: Legion::LLM::AuditProjection.audit_max_binary_data_bytes, capture: capture,
+                                                                 fingerprints: fingerprints)
+          projected[:capture] = capture
+          projected
         end
 
         def publish(request:, response:)
           event = build_event(request: request, response: response)
-          Legion::LLM::Audit.emit_prompt(event)
-          event
+          { event: event, status: Legion::LLM::Audit.emit_prompt(event) }
         rescue StandardError => e
           handle_exception(e, level: :warn)
-          nil
+          { event: event, status: :dropped }
         end
 
         def finish_reason_value(response)
@@ -139,20 +146,54 @@ module Legion
           end
         end
 
-        def current_turn_messages(messages)
-          return messages unless messages.is_a?(Array)
-
-          max = audit_max_messages
-          return messages if messages.size <= max
-
-          truncated = messages.last(max)
-          full_hash = Digest::SHA256.hexdigest(messages.map { |m| (m[:content] || m['content']).to_s }.join)
-          truncated.unshift({ role: :system, content: "[audit: #{messages.size} messages, showing last #{max}, full_hash=#{full_hash}]" })
-          truncated
+        # This identity is intentionally separate from ContentHash's text-only
+        # embedding/RAG contract. Generated message IDs and timestamps are not
+        # content; roles, tool state and every media fingerprint are.
+        def semantic_message_digest(messages:, fingerprints:)
+          digest = Digest::SHA256.new
+          digest << '['
+          messages.each_with_index do |message, index|
+            digest << ',' unless index.zero?
+            semantic = Legion::LLM::AuditProjection.project_value(value: message.to_h.except(:id, :timestamp),
+                                                                  binary_limit: -1, capture: nil, fingerprints: fingerprints)
+            update_semantic_digest(digest: digest, value: semantic)
+          end
+          digest << ']'
+          digest.hexdigest
         end
 
-        def audit_max_messages
-          Legion::Settings[:llm][:compliance][:audit_max_messages]
+        def update_semantic_digest(digest:, value:)
+          case value
+          when Hash
+            digest << '{'
+            value.keys.sort_by(&:to_s).each_with_index do |key, index|
+              digest << ',' unless index.zero?
+              digest << Legion::JSON.dump(key.to_s) << ':'
+              update_semantic_digest(digest: digest, value: value[key])
+            end
+            digest << '}'
+          when Array
+            digest << '['
+            value.each_with_index do |item, index|
+              digest << ',' unless index.zero?
+              update_semantic_digest(digest: digest, value: item)
+            end
+            digest << ']'
+          else
+            digest << Legion::JSON.dump(value)
+          end
+        end
+
+        def audit_messages(messages:, capture:)
+          max = [Legion::Settings[:llm][:compliance][:audit_max_messages], 0].max
+          retained = messages.last(max)
+          omitted = messages.size - retained.size
+          if omitted.positive?
+            capture[:captured_message_count] = retained.size
+            capture[:omitted_message_count] = omitted
+            Legion::LLM::AuditProjection.mark_projection(capture: capture, reason: :message_limit)
+          end
+          retained.map(&:to_h)
         end
 
         def build_message_context(request:, response:)

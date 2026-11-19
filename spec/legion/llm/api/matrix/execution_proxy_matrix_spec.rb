@@ -2,20 +2,19 @@
 
 # G23/G24 — In-process matrix harness for the LegionIO execution-proxy path.
 #
-# Asserts the IDENTICAL G24 shapes pinned by the lex-llm conformance kit:
-# server-executed LegionIO tools surface as completed NON-actionable items
-# on every client format. The kit's contract is the source of truth; this
-# spec is the in-process gate; legionio-e2e's validators (claude+codex) run
-# the same shape assertions live. Three suites, one oracle.
+# Server executions remain visible without asking clients to execute them.
+# Canonical execution records remain the source of truth; client translators
+# render each dialect's representation. OpenAI function calls are actionable
+# even with completed status, so server exchanges use MCP items in Responses
+# and assistant content in Chat Completions.
 #
 # G24 contract enforced here:
 #   /v1/messages       → server_tool_use + server_tool_result blocks
 #                        present, plain tool_use NOT present, stop_reason
 #                        end_turn.
 #   /v1/responses      → status 'completed' (NOT requires_action),
-#                        completed function_call + function_call_output
-#                        items present, action_required omitted, no
-#                        non-completed function_call items.
+#                        visible call and result in completed MCP items,
+#                        action_required omitted, no function_call items.
 #   /v1/chat/completions → finish_reason 'stop' (NOT 'tool_calls'),
 #                        message.tool_calls absent or empty, server result
 #                        text in assistant content.
@@ -128,14 +127,13 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
         expect(body[:stop_reason]).to eq('tool_use')
       when :openai_responses
         output = body[:output]
-        server_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'fake_legion_failure' }
-        server_result = output.find { |item| item[:type] == 'function_call_output' && item[:call_id] == 'call_fake_legion_bad' }
+        server_call = output.find { |item| item[:type] == 'mcp_call' && item[:name] == 'fake_legion_failure' }
         client_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'exec_command' }
 
-        expect(server_call).not_to be_nil
-        expect(server_call[:status]).to eq('completed')
-        expect(server_result).not_to be_nil
-        expect(server_result[:output]).to include('deterministic fake LegionIO tool failure')
+        expect(output.select { |item| item[:type] == 'function_call' }.map { |item| item[:name] }).to eq(['exec_command'])
+        expect(server_call).to include(id: 'call_fake_legion_bad', server_label: 'legion', status: 'failed')
+        expect(server_call[:output]).to include('deterministic fake LegionIO tool failure')
+        expect(server_call[:error]).to include(type: 'mcp_tool_execution_error')
         expect(client_call).not_to be_nil
         # Responses protocol: the pending client call rides in output[] as a
         # function_call item; the response status is `completed` (the client
@@ -241,8 +239,8 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
         client_call = output.find { |item| item[:type] == 'function_call' && item[:name] == 'exec_command' }
 
         # Actionable client call rides in output[]; it must NOT be paired with a
-        # function_call_output (that pairing is reserved for server-executed
-        # tools — a fabricated passthrough result must never surface as one).
+        # function_call_output: the client has not executed it yet, so no
+        # fabricated passthrough result may appear.
         expect(client_call).not_to be_nil
         expect(output.map { |item| item[:type] }).not_to include('function_call_output')
         expect(body[:status]).to eq('completed')
@@ -417,7 +415,7 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
   end
 
   describe '/v1/responses — server-side LegionIO tool execution' do
-    it 'surfaces completed function_call+function_call_output items, status completed, no requires_action' do
+    it 'surfaces a structured MCP exchange with no client-actionable server call' do
       FakeProvider.with_scenario(:server_tool_legion) do
         post '/v1/responses',
              Legion::JSON.dump({ model: 'fake-default', input: 'list legionio tools' }),
@@ -431,23 +429,10 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
       expect(body[:status]).to eq('completed')
       expect(body[:action_required]).to be_nil
 
-      # Server tools surface as completed function_call items (visible to
-      # the model+client) plus a function_call_output sibling carrying the
-      # result. Never as 'in_progress' or 'requires_action' — the client
-      # must not re-execute.
+      # Function-call items request client execution even with completed
+      # status. Server executions use MCP items with their results attached.
       function_calls = body[:output].select { |i| i[:type] == 'function_call' }
-      expect(function_calls).not_to be_empty
-      function_calls.each do |fc|
-        expect(fc[:status]).to eq('completed'),
-                               "function_call should be completed, got #{fc.inspect}"
-        expect(fc[:name]).to eq('fake_legion_echo')
-      end
-
-      function_call_outputs = body[:output].select { |i| i[:type] == 'function_call_output' }
-      expect(function_call_outputs).not_to be_empty
-      function_call_outputs.each do |fco|
-        expect(fco[:output].to_s).to include('echo:ping')
-      end
+      expect(function_calls).to be_empty
 
       # Trailing assistant text from round 2 is also present.
       message_items = body[:output].select { |i| i[:type] == 'message' && i[:phase] != 'reasoning' }
@@ -456,6 +441,9 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
                           .map { |c| c[:text] }
                           .join
       expect(text).to include('tool result observed: ping')
+      server_call = body[:output].find { |item| item[:type] == 'mcp_call' }
+      expect(server_call).to include(name: 'fake_legion_echo', arguments: '{"value":"ping"}',
+                                     output: 'echo:ping', server_label: 'legion', status: 'completed', error: nil)
 
       # G24 point 1 — provider received the tool result on the follow-up.
       calls = FakeProvider.calls
@@ -466,6 +454,30 @@ RSpec.describe '[matrix] execution-proxy path × FakeProvider', type: :request d
         role == 'tool' && content.to_s.include?('echo:ping')
       end
       expect(tool_in_followup).to be(true)
+    end
+
+    it 'replays MCP history to the provider without executing the server tool again' do
+      FakeProvider.with_scenario(:server_tool_legion) do
+        post '/v1/responses', Legion::JSON.dump({ model: 'fake-default', input: 'list legionio tools' }),
+             'CONTENT_TYPE' => 'application/json'
+      end
+      first = Legion::JSON.load(last_response.body)
+      server_call = first[:output].find { |item| item[:type] == 'mcp_call' }
+      expect(server_call).not_to be_nil
+      expect(Legion::LLM::Tools::MCPExecution).not_to receive(:dispatch)
+
+      FakeProvider.with_scenario(:text) do
+        post '/v1/responses',
+             Legion::JSON.dump({ model: 'fake-default', input: first[:output] + [{ role: 'user', content: 'Continue.' }] }),
+             'CONTENT_TYPE' => 'application/json'
+      end
+
+      expect(last_response.status).to eq(200)
+      messages = FakeProvider.calls.last[:messages]
+      expect(messages.flat_map { |message| message.tool_calls || [] }.map(&:id)).to include(server_call[:id])
+      result = messages.find { |message| message.role == :tool && message.tool_call_id == server_call[:id] }
+      expect(result.content).to include('echo:ping')
+      expect(Legion::JSON.load(last_response.body)[:output].none? { |item| item[:type] == 'mcp_call' }).to be(true)
     end
   end
 

@@ -21,20 +21,13 @@ module Legion
                 log.debug('[llm][api][namespaces][providers] action=list_providers')
                 require_llm!
 
-                # N7: a registry read FAULT must not masquerade as an empty
-                # registry (a 200 with []). The fault propagates to the route's
-                # 500 handler — logged there, error-shaped to the caller.
-                instances = Legion::LLM::Call::Registry.all_instances
-
-                provider_list = instances.map do |entry|
-                  Legion::LLM::API::Native::Providers.instance_to_hash(entry)
-                end
-                provider_list = Legion::LLM::API::Native::Providers.union_ssot_providers(provider_list)
+                snapshot = Legion::LLM::Inventory.snapshot
+                provider_list = Legion::LLM::API::Native::Providers.instances(snapshot: snapshot)
 
                 summary = {
                   total:           provider_list.size,
                   native:          provider_list.count { |p| p[:native] },
-                  routing_enabled: Legion::LLM::Router.routing_enabled?
+                  routing_enabled: provider_list.any?
                 }
 
                 log.debug("[llm][api][namespaces][providers] action=listed count=#{provider_list.size}")
@@ -49,23 +42,15 @@ module Legion
                 log.debug("[llm][api][namespaces][providers] action=get_provider name=#{provider_name}")
                 require_llm!
 
-                provider_sym = provider_name.to_sym
-
-                # N7: a registry read FAULT must not masquerade as an empty
-                # registry (a 200 with []). The fault propagates to the route's
-                # 500 handler — logged there, error-shaped to the caller.
-                instances = Legion::LLM::Call::Registry.all_instances
-
-                family = instances.select { |entry| entry[:provider].to_sym == provider_sym }
+                snapshot = Legion::LLM::Inventory.snapshot
+                family = Legion::LLM::API::Native::Providers.instances(snapshot: snapshot, provider: provider_name)
 
                 unless family.any?
                   log.debug("[llm][api][namespaces][providers] action=not_found name=#{provider_name}")
                   halt json_error('provider_not_found', "Provider '#{provider_name}' not found", status_code: 404)
                 end
 
-                provider_list = family.map do |entry|
-                  Legion::LLM::API::Native::Providers.instance_to_hash(entry)
-                end
+                provider_list = family
 
                 log.debug("[llm][api][namespaces][providers] action=found name=#{provider_name} instances=#{provider_list.size}")
                 json_response({ provider: provider_name, instances: provider_list })

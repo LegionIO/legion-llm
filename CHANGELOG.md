@@ -1,5 +1,103 @@
 # Legion LLM Changelog
 
+## [0.16.20] - 2026-11-18
+
+### Fixed
+- Replace unconditional RAG entry dumps with lazy DEBUG diagnostics limited to Apollo entry ID, content type, numeric confidence/distance, content length, and request/strategy context. Retrieved text, raw source, tags, and arbitrary metadata stay out of these logs while enrichment retains the complete entries. Move the adjacent strategy diagnostic to DEBUG ([#193](https://github.com/LegionIO/legion-llm/issues/193)).
+
+## [0.16.19] - 2026-11-18
+
+### Fixed
+- Normalize image MIME case and the `image/jpg` alias, strip ASCII whitespace from base64, and restore omitted padding without changing the caller's input. Preserve other image MIME types for provider validation instead of imposing one provider's image-format allowlist at ingress.
+- Reject unsupported content block types with HTTP 400 before inference or streaming begins across Messages, Chat Completions, and Responses.
+- Fingerprint oversized audit message content, tool arguments/results, and metadata before omitting older messages. Compact bulky event fields first, preserve tool IDs, names, message associations and content digests, and retain bounded plaintext/encrypted payloads. Shared audit projection now lives below inference and transport.
+- Report durable spooled prompt audits as `spooled`, distinct from published, disabled, or dropped events. Preserve this status in the execution timeline and local audit observation.
+- Initialize native tool-choice spec cleanup state before setup can raise. Remove temporary companion-gem CI pins after publication so pull requests, main, scheduled checks, and releases resolve published dependencies.
+
+## [0.16.18] - 2026-11-18
+
+### Fixed
+- Preserve routed embedding provenance on fresh, batch, and cached results: provider/model, selected instance, authoritative revision when available, actual dimensions, document/query prefix pair, normalization, task, and stable space ID. Share a space across instances only with matching revision evidence; isolate unknown revisions by instance ([#199](https://github.com/LegionIO/legion-llm/pull/199), incorporated into #200).
+- Validate complete embedding attempts before returning or caching vectors. Reject missing, nested, nonnumeric, nonfinite, zero, and inconsistent-dimension vectors through the existing routing retry policy; never discard malformed chunks or label vectors with dimensions they do not have. Consume both canonical embedding artifacts and the defined `LexLLMAdapter` result shape.
+- Regenerate legacy or incompatible cache entries instead of assigning them new provenance. Compatible hits preserve cached token accounting and identify the currently selected instance; changing either task prefix invalidates the shared embedding space.
+
+## [0.16.17] - 2026-11-18
+
+### Fixed
+- Preserve embedding request `input_tokens` and `total_tokens` on cache hits so ledger can account for served workload and counterfactual savings. Cached requests retain `cache_hit: true`, zero output tokens, and `cost_usd: 0` without another provider execution. Missing provider usage remains zero. Regression coverage verifies serialized miss/hit events through real selection, caching, and metering, alongside routing and provider-error paths ([#201](https://github.com/LegionIO/legion-llm/issues/201)).
+
+## [0.16.16] - 2026-11-18
+
+### Fixed
+- Execute local Legion tools through the existing MCP SDK adapter in-process, without an HTTP hop or daemon re-entry. Render documented `mcp_call` items and lifecycle events in OpenAI Responses, preserve full results and replay their call/result history. Chat Completions retains visible assistant transcript content; executable function calls remain reserved for client-owned tools. Preserve the Anthropic server-tool representation and withhold unclassified streaming fragments until ownership is known.
+- Preserve complete server-tool results in canonical execution records delivered to stream observers and final responses. Diagnostic event previews remain bounded without truncating the client-visible execution result.
+- Retain earlier server executions when a later provider round hands off a client tool, and prevent completed tool calls from executing again in the post-response step.
+- Render the same terminal state in synchronous and streaming Responses: token exhaustion and content filtering include the documented incomplete reason, and streams emit `response.incomplete` instead of claiming completion. Preserve already-completed MCP results when a later answer is truncated.
+
+## [0.16.15] - 2026-11-18
+
+### Fixed
+- Require thinking-capable inventory lanes when canonical thinking is enabled. Native request input uses the shared canonical normalizer at ingress; routing reads the canonical flag rather than looking for a Hash, preserving explicit budget and effort independently. Disabled or absent thinking leaves text-only lanes eligible.
+
+## [0.16.14] - 2026-11-18
+
+### Fixed
+- Include tool counts in `legion_list_special_tools` results so callers can answer inventory-size questions without enumerating every definition. Counts come from the same returned snapshot, total distinct callable names, and preserve both complete tool lists and runtime details.
+
+## [0.16.13] - 2026-11-18
+
+### Fixed
+- Preserve canonical thinking-token usage through the shared executor and stream assembler. Responses clients receive provider-reported reasoning counts in both synchronous usage and stream trailers, even when no thinking text is returned, without inventing a reasoning block or double-counting output tokens.
+- Retain canonical usage during post-response extraction and carry its thinking count into metering. Ledger totals count input plus output once; thinking remains an output-token breakdown.
+- Pin CI and security checks to the shared canonical system-string validation used by the local matrix suite.
+- Install the Bedrock test dependency in standalone checkouts and pin its verified companion in CI so overload-isolation coverage runs without an adjacent workspace.
+
+## [0.16.12] - 2026-11-17
+
+### Fixed
+- Preserve output-token limits, stop sequences and sampling parameters as canonical dispatch params across all client dialects and both direct/fleet execution paths.
+- Record native server-tool executions in the shared execution timeline so completion summaries and audit evidence agree with actual tool calls.
+- Read provider listings and family details from one authoritative Inventory snapshot. Pending configuration claims no longer masquerade as published instances; health and capabilities come from the published records in both API route trees.
+
+## [0.16.11] - 2026-11-17
+
+### Fixed
+- **Request-scoped routing requirements.** Include `Routing::Requirements` in Router so each instance initializes its own request facts once and exposes direct readers such as `maximum_attempts`. Preserve shared immutable-value validation, canonical tool replay, capabilities, pins, context budgets and ingress policy generation.
+- **Router constructor kwargs.** Restore trailing `**` so `Router.new(request:, operation:, body_model:)` accepts additional keyword arguments.
+- **Tool-result citation preservation.** Retain text-block citations and other metadata before canonical construction instead of dropping annotations and collapsing the result to a string. Normalization does not mutate the client's metadata.
+- **Cached system instructions.** Normalize OpenAI Chat system text to the canonical string contract, preserving exact newlines instead of injecting Ruby hash representations into the prompt.
+- **Cached history safeguards.** Strip leading thinking across adjacent annotated text blocks and enforce one historical tool-result text cap across blocks, retaining surviving annotations, media, tool associations, and current-turn content.
+- **Streaming tool identity.** Preserve Hash and typed Canonical tool-call fragments, correlate parallel argument deltas by provider index, and reset that index mapping between provider rounds without fabricating client-side identities.
+- **Live server-tool delivery.** Publish execution-owned tool calls and results through the shared stream observer before continuation completes, upgrade unresolved source classification, and avoid duplicate call/result events during finalization.
+- **Named tool-choice lifecycle.** Release a named tool choice only after that server-side call completes, allowing continuation without forcing the same tool again while leaving the original request and unrelated choice modes unchanged.
+- **Typed streaming tool snapshots.** Hold replaceable Hash argument snapshots until tool-call completion instead of emitting contradictory append-only JSON. Raw JSON fragments still stream incrementally, and Anthropic Messages, Chat Completions, and Responses all receive valid final arguments and terminal events.
+- **Anthropic streaming tool input.** Start tool blocks with an empty input object; argument snapshots and raw JSON fragments are delivered only through `input_json_delta`, preventing intermediate values or partial JSON strings from leaking through `content_block_start`.
+- Preserve shared registry trigger words during request matching. Repeated requests no longer append matching aliases to registered tools or inflate server-tool inventory responses.
+- Propagate stream-consumer exceptions unchanged through exact callable dispatch, releasing the lease without misclassifying client disconnects or translation errors as provider failures.
+
+### Changed
+- Require `lex-llm >= 0.8.6` for shared request-fact validation; executor, embedding, token-counting and cache consumers construct the per-request Router directly.
+
+## [0.16.10] - 2026-10-30
+
+### Fixed
+- **Canonical prompt auditing.** Histories beyond `llm.compliance.audit_max_messages` no longer call Hash accessors on canonical messages. Audit projections retain the newest messages without changing inference history, and record original, captured, and omitted counts.
+- **Whole-event audit payload limits.** Prompt events account for attribution and encrypted wire size against `transport.max_payload_bytes`. Oversized binary content becomes explicit byte-count/SHA256 fingerprints, including nested image/audio/video content; aggregate overflow removes remaining binary content before older messages and bulky nonessential fields. An essential envelope that cannot fit is explicitly dropped.
+- **Multimodal audit identity.** Request audit hashes cover the full original message history, media fingerprints, roles, and tool state, excluding generated message IDs and timestamps. The text-only embedding/RAG hash contract is unchanged.
+- **Honest publication outcomes.** Post-response timelines distinguish published, disabled, and dropped audit delivery. GAIA can still observe the constructed local event when transport does not accept publication.
+- **Anthropic pasted images and tool results.** Normalize base64 and URL source envelopes at both user and tool-result boundaries, preserving mixed content order, tool association, and cache-control metadata.
+- **OpenAI image inputs.** Normalize Responses `input_image` and Chat `image_url` parts without dropping base64 MIME or image detail. Malformed image sources, provider-specific file references, and unsupported generated-image history return HTTP 400 before streaming begins.
+- **N×N text convergence.** All client dialects preserve text-fragment whitespace and converge to the same canonical text representation without collapsing annotated blocks.
+- **Request-owned routing facts.** Construct shared immutable `RequestRequirements` before routing, including canonical tool replay, capabilities, pins and context budgets. Router consumes those facts without reconstructing them.
+- **Real execution boundary coverage.** Exercise client ingress, Inventory selection, direct callable execution, signed fleet serialization/validation/rehydration, exact worker resolution, provider rendering and rejection of tampered bindings/media.
+- **Router constructor kwargs.** Restore trailing `**` so `Router.new(requirements:)` accepts additional keyword arguments.
+- **Prompt audit require path.** Load `AuditPublisher` through its gem-rooted require path instead of `require_relative`.
+
+### Changed
+- Declare the vLLM renderer as a test dependency in standalone checkouts so image regressions run in CI as well as the multi-repo workspace. The RAG integration regression now observes the active provider boundary instead of the retired dispatch path.
+- Require `legion-transport >= 1.4.31` and use its encoded-payload validation boundary directly, removing the private pre-encoding validator override.
+- Require `lex-llm >= 0.8.6` and use `Router.new(requirements:)`; all executor, embedding, token-counting and cache consumers use the same requirements constructor.
+
 ## [0.16.9] - 2026-08-20
 
 ### Changed

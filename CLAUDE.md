@@ -46,9 +46,14 @@ These have caused production incidents. They are also enforced by `rubocop-legio
 `Legion/Framework` cops, lex-llm conformance fixtures, and the matrix harness.
 
 1. **Execution-proxy contract.** To the *client*, the daemon is a server-side execution surface:
-   LegionIO-resolved tools run server-side and appear in canonical server-tool shapes (Anthropic
-   `server_tool_use`/`server_tool_result`; OpenAI Responses non-actionable output items with
-   name+result) — the client never sees a pending call for a server-executed tool. To the
+   LegionIO-resolved tools run server-side and render from canonical execution records (Anthropic
+   `server_tool_use`/`server_tool_result`; OpenAI Responses `mcp_call` items for MCP executions;
+   Chat visible assistant content carrying call ID, name, arguments, and full result). Local
+   Legion handlers execute through the existing MCP SDK adapter in-process, without HTTP or
+   daemon API re-entry. Canonical metadata preserves the MCP server label; direct legacy
+   executions without MCP provenance retain a visible text fallback. OpenAI `function_call`/`tool_calls` items
+   request client execution even with `status: completed`, so they are reserved for client-owned
+   calls. Unclassified streaming fragments wait for execution ownership to resolve. To the
    *provider*, the daemon looks like the client: the same tool-use/tool-result exchange appears in
    the next turn in that provider's wire format. The model must know files changed.
 2. **Always translate; never passthrough.** Every request → `Canonical::Request`; every response

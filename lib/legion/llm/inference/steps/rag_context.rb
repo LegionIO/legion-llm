@@ -55,7 +55,7 @@ module Legion
             return false if query.nil? || query.empty?
 
             auto_strategy = @request.context_strategy.nil? || @request.context_strategy == :auto
-            log.unknown auto_strategy
+            log_step_debug(:rag_context, :query_strategy, auto_strategy: auto_strategy)
             return true unless auto_strategy
 
             !trivial_query?(query)
@@ -78,14 +78,7 @@ module Legion
             end
             total_chars = entries.sum { |e| (e[:content] || e['content']).to_s.length }
             log_step_info(:rag_context, :context_injected, strategy: strategy, entry_count: entries.size, total_chars: total_chars)
-            log.unknown entries
-
-            scores = entries.filter_map { |e| e[:confidence] || e[:distance] }.map { |s| s.is_a?(Numeric) ? s.round(3) : s }
-            log.debug(
-              "[llm][steps][rag_context] action=results_scored request_id=#{@request&.id || 'unknown'} " \
-              "strategy=#{strategy} count=#{entries.size} scores=#{scores.inspect} " \
-              "types=#{entries.map { |e| e[:content_type] }.compact.tally.inspect}"
-            )
+            log_rag_entry_metadata(entries, strategy)
 
             if @context_accounting
               rag_text = entries.map { |e| "[#{e[:content_type] || e['content_type']}] #{e[:content] || e['content']}" }.join("\n")
@@ -110,6 +103,25 @@ module Legion
               timestamp: Time.now
             }
             log_step_info(:rag_context, :context_added, strategy: strategy, entry_count: entries.size)
+          end
+
+          def log_rag_entry_metadata(entries, strategy)
+            entries.each do |entry|
+              log.debug do
+                # Keep this allowlist explicit: content, tags and arbitrary metadata can contain private knowledge.
+                step_log_message(:rag_context, :retrieved_entry,
+                                 strategy:      strategy,
+                                 entry_id:      entry[:id] || entry['id'],
+                                 content_type:  entry[:content_type] || entry['content_type'],
+                                 confidence:    rag_log_score(entry[:confidence] || entry['confidence']),
+                                 distance:      rag_log_score(entry[:distance] || entry['distance']),
+                                 content_chars: (entry[:content] || entry['content']).to_s.length)
+              end
+            end
+          end
+
+          def rag_log_score(value)
+            value.round(3) if value.is_a?(Numeric) && value.real? && value.finite?
           end
 
           def record_rag_timeline(result, strategy, start_time)

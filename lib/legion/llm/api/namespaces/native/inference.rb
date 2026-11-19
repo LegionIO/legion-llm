@@ -98,7 +98,10 @@ module Legion
                 pipeline_request = Legion::LLM::Inference::Request.build(
                   id:              request_id,
                   messages:        messages,
-                  system:          body[:system],
+                  # Converge through the shared client-edge owner — the raw
+                  # body value must reach the pipeline as a string, never a
+                  # block array the adapter would stringify.
+                  system:          extract_system_text(body[:system]),
                   routing:         { provider: provider, model: model, instance: body[:instance] }.compact,
                   tools:           tool_declarations,
                   caller:          effective_caller,

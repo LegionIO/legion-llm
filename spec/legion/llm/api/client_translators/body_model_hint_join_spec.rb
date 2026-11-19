@@ -24,17 +24,10 @@ RSpec.describe 'client translator body-model hint join' do
       )
     end
 
-    # SSOT v4: the Request no longer carries a body-model-hint decision; the
-    # per-request Router computes it live in initialize from the raw client body
-    # model (carried by the translator into metadata[:client_model]) against the
-    # [:llm][:router] settings. The join this spec covers is therefore:
-    # translator.parse_request -> build_inference_request -> metadata[:client_model]
-    # -> Router.new(body_model:) -> router.body_model_hint_decision.
+    # Client ingress supplies raw model metadata and trusted header constraints;
+    # requirement construction resolves their precedence before Router selection.
     def build_router(request)
-      Legion::LLM::Router.new(
-        request: request, operation: :chat,
-        body_model: request.metadata[:client_model]
-      )
+      Legion::LLM::Router.new(request: request, operation: :chat, body_model: request.metadata[:client_model])
     end
 
     def with_body_hint_settings(allow:, whitelist: [], blacklist: [])

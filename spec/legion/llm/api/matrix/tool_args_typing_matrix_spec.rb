@@ -139,7 +139,7 @@ RSpec.describe '[matrix] tool-call argument typing per format', type: :request d
                                            "OpenAI Responses function_call.arguments must be a JSON String even on degraded provider output; got #{function_call[:arguments].class}"
     end
 
-    it 'G24 server function_call.arguments is also a JSON String' do
+    it 'G24 server arguments remain structured in the visible exchange without requesting execution' do
       MatrixHelper.register_legion_tool!
       FakeProvider.with_scenario(:server_tool_legion) do
         post '/v1/responses',
@@ -150,10 +150,11 @@ RSpec.describe '[matrix] tool-call argument typing per format', type: :request d
       expect(last_response.status).to eq(200)
       body = Legion::JSON.load(last_response.body)
       function_calls = body[:output].select { |i| i[:type] == 'function_call' }
-      expect(function_calls).not_to be_empty
-      function_calls.each do |fc|
-        expect(fc[:arguments]).to be_a(String)
-      end
+      expect(function_calls).to be_empty
+      call_record = body[:output].find { |item| item[:type] == 'mcp_call' }
+      expect(call_record[:name]).to eq('fake_legion_echo')
+      expect(call_record[:arguments]).to be_a(String)
+      expect(Legion::JSON.load(call_record[:arguments])).to eq(value: 'ping')
     ensure
       MatrixHelper.unregister_legion_tool!
     end

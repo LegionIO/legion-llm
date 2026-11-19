@@ -15,7 +15,14 @@ module Legion
             response = current_response
             log_step_debug(:post_response, :publish_audit, provider: @resolved_provider || 'none', model: @resolved_model || 'none')
 
-            audit_event = AuditPublisher.publish(request: @request, response: response)
+            publication = AuditPublisher.publish(request: @request, response: response)
+            audit_event = publication[:event]
+            status = publication[:status]
+            @timeline.record(
+              category: :audit, key: 'audit:publish',
+              direction: :outbound, detail: "#{status} prompt audit",
+              from: 'pipeline', to: 'llm.audit', data: { status: status }
+            )
 
             if defined?(Legion::Gaia::AuditObserver) && audit_event
               log_step_debug(:post_response, :notify_gaia_audit_observer)
@@ -24,12 +31,7 @@ module Legion
               log_step_debug(:post_response, :gaia_audit_observer_skipped, reason: audit_event ? :observer_unavailable : :no_audit_event)
             end
 
-            @timeline.record(
-              category: :audit, key: 'audit:publish',
-              direction: :outbound, detail: 'published to llm.audit',
-              from: 'pipeline', to: 'llm.audit'
-            )
-            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?)
+            log_step_debug(:post_response, :complete, audit_event_present: !audit_event.nil?, audit_status: status)
           rescue StandardError => e
             @warnings << "post_response error: #{e.message}"
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.post_response')
@@ -55,22 +57,18 @@ module Legion
             cache_read  = usage_source.respond_to?(:cache_read_tokens) ? usage_source.cache_read_tokens.to_i : 0
             cache_write = usage_source.respond_to?(:cache_write_tokens) ? usage_source.cache_write_tokens.to_i : 0
 
-            details = if usage_source.respond_to?(:output_tokens_details) && usage_source.output_tokens_details.is_a?(Hash)
-                        usage_source.output_tokens_details
-                      else
-                        {}
-                      end
+            thinking = usage_source.thinking_tokens if usage_source.respond_to?(:thinking_tokens)
 
             log_step_debug(:post_response, :tokens_extracted, input: input, output: output,
                                                               cache_read: cache_read, cache_write: cache_write)
             log_zero_token_usage(input, output)
 
-            Usage.new(
-              input_tokens:          input,
-              output_tokens:         output,
-              cache_read_tokens:     cache_read,
-              cache_write_tokens:    cache_write,
-              output_tokens_details: details
+            Legion::Extensions::Llm::Canonical::Usage.build(
+              input_tokens:       input,
+              output_tokens:      output,
+              cache_read_tokens:  cache_read,
+              cache_write_tokens: cache_write,
+              thinking_tokens:    thinking
             )
           end
 

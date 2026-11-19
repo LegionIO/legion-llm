@@ -11,6 +11,21 @@ module Legion
           include Legion::Logging::Helper
           include Steps::Logging
 
+          def record_tool_execution(tool_call_id:, tool_name:, arguments:, source:, result:, exchange_id:)
+            @timeline.record(
+              category: :tool, key: "tool:execute:#{tool_name}",
+              exchange_id: exchange_id, direction: :outbound,
+              detail: "#{result[:status]} via #{source[:type]}",
+              from: 'pipeline', to: "tool:#{tool_name}",
+              duration_ms: result[:duration_ms],
+              data: {
+                tool_call_id: tool_call_id, arguments: arguments,
+                source: describe_tool_source(source), source_type: source[:type]&.to_sym,
+                status: result[:status]
+              }
+            )
+          end
+
           def step_tool_calls
             unless @raw_response.respond_to?(:tool_calls) && @raw_response.tool_calls&.any?
               log_step_debug(:tool_calls, :skipped, reason: :no_tool_calls)
@@ -32,6 +47,7 @@ module Legion
               tool_call_id = tc.id
               source = find_tool_source(tool_name)
               next unless source
+              next unless tc.result.nil?
 
               if client_passthrough_source?(source)
                 log.info(
@@ -61,9 +77,11 @@ module Legion
               # The dispatcher is a daemon-internal Hash-consumer (registry/
               # extension/mcp execution) — the canonical tool call projects to
               # its wire shape at this boundary (member reads; G3).
-              result = ToolDispatcher.dispatch(
+              definition = native_dispatch_tools[tool_name.to_sym] if Tools::MCPExecution::LOCAL_SOURCES.include?(source[:type])
+              result = Tools::MCPExecution.dispatch(
                 tool_call:   { id: tool_call_id, name: tool_name, arguments: tc.arguments },
                 source:      source,
+                definition:  definition,
                 exchange_id: tool_exchange_id
               )
 
@@ -79,7 +97,10 @@ module Legion
                     args:          tc.arguments,
                     result:        result_string,
                     error:         result[:status] == :error,
-                    runner_key:    runner_key
+                    runner_key:    runner_key,
+                    typed_call:    tc.with(source: canonical_source_symbol(source), metadata: Tools::MCPExecution.metadata_for(source))
+                                     .with_result(result: result_string, status: result[:status] == :error ? :error : :success,
+                                                  duration_ms: result[:duration_ms])
                   }
                 end
               end
@@ -87,20 +108,8 @@ module Legion
               # :source is the display string (native SSE surface);
               # :source_type is the canonical dispatch-type enum consumed by
               # the response-exit reconstruction (G3).
-              @timeline.record(
-                category: :tool, key: "tool:execute:#{tool_name}",
-                exchange_id: tool_exchange_id, direction: :outbound,
-                detail: "#{result[:status]} via #{source[:type]}",
-                from: 'pipeline', to: "tool:#{tool_name}",
-                duration_ms: result[:duration_ms],
-                data: {
-                  tool_call_id: tool_call_id,
-                  arguments:    tc.arguments,
-                  source:       describe_tool_source(source),
-                  source_type:  source[:type]&.to_sym,
-                  status:       result[:status]
-                }
-              )
+              record_tool_execution(tool_call_id: tool_call_id, tool_name: tool_name, arguments: tc.arguments,
+                                    source: source, result: result, exchange_id: tool_exchange_id)
 
               @timeline.record(
                 category: :tool, key: "tool:result:#{tool_name}",
@@ -239,7 +248,7 @@ module Legion
             duration_ms = typed_call&.duration_ms || tool_call_value(tool_call, :duration_ms)
 
             if tool_call.respond_to?(:with_result)
-              base = tool_call.respond_to?(:with) ? tool_call.with(source: source) : tool_call
+              base = tool_call.respond_to?(:with) ? tool_call.with(source: source, metadata: tool_call.metadata.merge(typed_call&.metadata || {})) : tool_call
               return base.with_result(
                 result:      entry[:result],
                 status:      status,

@@ -76,11 +76,26 @@ RSpec.describe Legion::LLM::Tools::Special do
 
       inventory = described_class.inventory
 
+      expect(inventory[:counts]).to eq(total: 4, special_tools: 3, settings_extensions_tools: 1)
       expect(inventory[:special_tools].first[:name]).to eq(described_class::LIST_SPECIAL_TOOLS_NAME)
       expect(inventory[:runtime][:ruby][:path]).to eq('/usr/bin/ruby')
       expect(inventory[:settings_extensions_tools]).to contain_exactly(
         hash_including(name: 'legion_read_file', deferred: true, extension: 'lex-node')
       )
+    end
+
+    it 'counts distinct callable names from the same snapshot without changing either inventory' do
+      special_tools = [{ name: 'ruby' }, { name: 'legion_list_special_tools' }].freeze
+      extension_tools = [{ name: 'ruby' }, { name: 'legion_read_file' }].freeze
+      expect(described_class).to receive(:special_tool_summaries).once.and_return(special_tools)
+      expect(described_class).to receive(:settings_extensions_tools).once.and_return(extension_tools)
+      allow(described_class).to receive(:runtime_inventory).and_return({})
+
+      inventory = described_class.inventory
+
+      expect(inventory[:counts]).to eq(total: 3, special_tools: 2, settings_extensions_tools: 2)
+      expect(inventory[:special_tools]).to equal(special_tools)
+      expect(inventory[:settings_extensions_tools]).to equal(extension_tools)
     end
   end
 

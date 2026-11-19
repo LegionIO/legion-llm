@@ -3,6 +3,7 @@
 require 'legion/logging/helper'
 require 'legion/llm/api/shared_helpers'
 require 'legion/llm/api/error_translator'
+require 'legion/llm/api/client_translators/shared_extractors'
 require 'legion/llm/inference/executor/payload_builder'
 
 module Legion
@@ -10,6 +11,11 @@ module Legion
     module API
       module Namespaces
         module Helpers
+          # Ordered: SharedExtractors FIRST so SharedHelpers#token_value keeps
+          # precedence over the same-named extractor (the routes depend on its
+          # nil/struct semantics). SharedExtractors contributes
+          # extract_system_text to the client-facing routes below.
+          include Legion::LLM::API::ClientTranslators::SharedExtractors
           include Legion::LLM::API::SharedHelpers
           include Legion::LLM::API::ErrorTranslator
 

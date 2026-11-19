@@ -74,67 +74,6 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
   describe '#initialize' do
     context 'valid inputs' do
-      it 'builds a Router instance for a :chat operation' do
-        activate_lane
-        router = build_router
-        expect(router).to be_a(Legion::LLM::Router)
-        expect(router.operation).to eq(:chat)
-      end
-
-      it 'derives pins from trusted_constraints' do
-        activate_lane(provider: :vllm, model: 'gemma-12b')
-        router = build_router(routing: { provider: 'vllm', model: 'gemma-12b' })
-        expect(router.provider_pin).to eq(:vllm)
-        expect(router.model_pin).to eq('gemma-12b')
-      end
-
-      it 'carries the body_model through' do
-        activate_lane
-        router = build_router(body_model: 'some-model')
-        expect(router.body_model).to eq('some-model')
-      end
-
-      it 'initializes with zero exclusions and zero consumed targets' do
-        activate_lane
-        router = build_router
-        expect(router.exclusions).to be_empty
-        expect(router.consumed_targets).to be_empty
-      end
-
-      it 'derives maximum_attempts from settings' do
-        Legion::Settings[:llm][:router][:max_attempts] = 5
-        router = build_router
-        expect(router.maximum_attempts).to eq(5)
-      end
-
-      it 'derives affinity_strength_bps from settings' do
-        Legion::Settings[:llm][:router][:affinity_strength_bps] = 7_500
-        router = build_router
-        expect(router.affinity_strength_bps).to eq(7_500)
-      end
-
-      it 'derives instance_pin from trusted_constraints' do
-        activate_lane(provider: :vllm, instance_id: 'apollo', model: 'gemma-12b')
-        router = build_router(routing: { instance: 'apollo' })
-        expect(router.instance_pin).to eq('apollo')
-      end
-
-      it 'derives tier_pin from trusted routing constraints' do
-        activate_lane(provider: :vllm, model: 'gemma-12b', tier: :local)
-        router = build_router(routing: { tier: 'local' })
-        expect(router.tier_pin).to eq(:local)
-      end
-
-      it 'tier_pin is nil when unconstrained' do
-        router = build_router
-        expect(router.tier_pin).to be_nil
-      end
-
-      it 'instance_pin is nil when unconstrained' do
-        router = build_router
-        expect(router.instance_pin).to be_nil
-      end
-
       it 'maximum_attempts uses trusted override when present' do
         activate_lane(provider: :vllm, model: 'gemma-12b')
         # The router max_attempts setting default (3) is the per-request ceiling;
@@ -151,13 +90,14 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
           )
         )
         router = build_router(request: req)
-        expect(router.maximum_attempts).to eq(2)
+        router.next_attempt!
+        expect(router.attempts_remaining).to eq(1)
       end
     end
 
     context 'invalid operation' do
       it 'raises ArgumentError for an unrecognized operation' do
-        expect { build_router(operation: :nonsense) }.to raise_error(ArgumentError, /invalid operation/)
+        expect { build_router(operation: :nonsense) }.to raise_error(Legion::Extensions::Llm::Inventory::Errors::ValidationError)
       end
     end
 
@@ -579,7 +519,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
 
       it 'adds thinking config serialized bytes when provided' do
         Legion::Settings[:llm][:router][:input_framing_overhead_tokens] = 0
-        thinking = { enabled: true, budget_tokens: 4096 }
+        thinking = Legion::Extensions::Llm::Canonical::Thinking::Config.build(budget: 4096)
         serialized = Legion::JSON.dump(thinking).bytesize
 
         router_with    = build_router(thinking: thinking, messages: [])

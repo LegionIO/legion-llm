@@ -7,6 +7,7 @@ require 'legion/extensions/llm'
 require 'legion/llm/types'
 require 'legion/llm/inference/request'
 require 'legion/llm/api/client_translators/shared_extractors'
+require 'legion/llm/api/client_translators/server_tool_transcript'
 
 module Legion
   module LLM
@@ -21,6 +22,7 @@ module Legion
           extend Legion::Logging::Helper
           include Legion::Logging::Helper
           include SharedExtractors
+          include ServerToolTranscript
 
           Canonical = Legion::Extensions::Llm::Canonical
 
@@ -152,21 +154,18 @@ module Legion
             tokens = pipeline_response.respond_to?(:tokens) ? pipeline_response.tokens || {} : {}
             raw_msg = pipeline_response.respond_to?(:message) ? pipeline_response.message : nil
             content = extract_content_text(raw_msg)
-            content = server_tool_results_text(pipeline_response) if content.empty?
             stop_reason = pipeline_response.respond_to?(:stop) ? pipeline_response.stop&.dig(:reason)&.to_s : nil
 
             actionable_tool_calls = build_tool_calls(pipeline_response)
             resolved_model = (routing[:model] || routing['model'] || model).to_s
 
-            # G24 — server-executed tools are not actionable. When all tool
-            # calls were server-resolved, finish_reason is 'stop' (not
-            # 'tool_calls') and the model's text content is the only
-            # client-visible turn. The server-resolved exchange is recorded
-            # in the conversation history (via the executor's tool loop),
-            # not on this response.
+            # Server-owned calls remain visible as transcript content. Only
+            # client-owned calls are rendered into executable tool_calls.
             finish_reason = actionable_tool_calls.empty? ? map_finish_reason(stop_reason) : 'tool_calls'
 
             content = nil if actionable_tool_calls.any? && content_looks_like_tool_json?(content)
+            server_text = server_tool_results_text(pipeline_response)
+            content = server_text + content.to_s unless server_text.empty?
 
             message_body = { role: 'assistant', content: content }
             message_body[:tool_calls] = actionable_tool_calls unless actionable_tool_calls.empty?
@@ -210,6 +209,14 @@ module Legion
             when :tool_call_delta
               tc = canonical_chunk.tool_call
               args = tool_fragment_field(tc, :arguments) || {}
+              source = tool_fragment_field(tc, :source)
+              if %i[special registry extension mcp].include?(source&.to_sym)
+                text = server_tool_call_text(id: tool_fragment_field(tc, :id), name: tool_fragment_field(tc, :name), arguments: args)
+                result = tool_fragment_field(tc, :result)
+                text += server_tool_result_text(id: tool_fragment_field(tc, :id), result: result) unless result.nil?
+                return chunk_envelope({ content: text })
+              end
+
               chunk_envelope({
                                tool_calls: [{
                                  index:    canonical_chunk.block_index || 0,
@@ -234,6 +241,7 @@ module Legion
           # `data: <chunk>\n\n` lines with a final `data: [DONE]\n\n`.
           class Events
             include Legion::Logging::Helper
+            include ServerToolTranscript
 
             def initialize(out:, request_id:, model:, conv_id: nil, include_reasoning: true)
               @out = out
@@ -242,6 +250,7 @@ module Legion
               @conv_id = conv_id
               @include_reasoning = include_reasoning
               @done_emitted = false
+              @server_tool_calls = {}
             end
 
             def on_start(model:, request_id:, input_tokens:)
@@ -285,7 +294,11 @@ module Legion
             end
 
             def on_tool_call_open(block_index:, tool_call:, server_tool:)
-              _ = server_tool
+              if server_tool
+                @server_tool_calls[block_index] = { id: tool_call[:id], name: tool_call[:name], arguments: +'' }
+                return
+              end
+
               # Send the initial tool_call with name. Index is 0-based across
               # this streaming response; chat.completion.chunk references it
               # by index in the delta.
@@ -305,6 +318,11 @@ module Legion
             def on_tool_call_delta(block_index:, partial_arguments_json:)
               return if partial_arguments_json.to_s.empty?
 
+              if (state = @server_tool_calls[block_index])
+                state[:arguments] << partial_arguments_json
+                return
+              end
+
               emit_chunk(delta_envelope({
                                           tool_calls: [{
                                             index:    block_index,
@@ -314,21 +332,18 @@ module Legion
             end
 
             def on_tool_call_close(block_index:)
-              _ = block_index
-              # No close event in chat.completion.chunk; finish_reason
-              # 'tool_calls' on the final done covers it.
+              state = @server_tool_calls[block_index]
+              return unless state
+
+              on_text_delta(block_index: block_index, text: server_tool_call_text(**state))
             end
 
             def on_tool_call_abort(**)
               nil
             end
 
-            def on_server_tool_result(block_index:, tool_call_id:, result_text:)
-              _ = block_index
-              _ = tool_call_id
-              _ = result_text
-              # Chat completions has no inline server tool result event. The
-              # follow-up turn carries the tool message.
+            def on_server_tool_result(block_index:, tool_call_id:, result_text:, **)
+              on_text_delta(block_index: block_index, text: server_tool_result_text(id: tool_call_id, result: result_text))
             end
 
             def on_keep_alive
@@ -414,15 +429,15 @@ module Legion
               role = m[:role].to_sym
               case role
               when :system
-                system_content = extract_content(m[:content])
+                system_content = extract_system_text(m[:content])
               when :assistant
-                entry = { role: role, content: extract_content(m[:content]) }
+                entry = { role: role, content: canonicalize_content_parts(m[:content]) }
                 entry[:tool_calls] = normalize_assistant_tool_calls(m[:tool_calls]) if m[:tool_calls]
                 messages << entry
               when :tool
-                messages << { role: role, content: extract_content(m[:content]), tool_call_id: m[:tool_call_id] }.compact
+                messages << { role: role, content: canonicalize_content_parts(m[:content]), tool_call_id: m[:tool_call_id] }.compact
               else
-                messages << { role: role, content: extract_content(m[:content]) }
+                messages << { role: role, content: canonicalize_content_parts(m[:content]) }
               end
             end
             [messages, system_content]
@@ -446,20 +461,6 @@ module Legion
                                   operation: 'llm.client_translator.openai_chat.normalize_tool_call')
               nil
             end
-          end
-
-          def extract_content(content)
-            return content if content.is_a?(String)
-            return content unless content.is_a?(Array)
-
-            # String parts (corrupted ContentBlock#inspect output in history)
-            # wrap as text blocks so they never reach canonical_content_block
-            # or the [:type] lookup as bare strings.
-            normalized = content.map { |b| b.is_a?(String) ? { type: 'text', text: b } : symbolize(b) }
-            has_non_text = normalized.any? { |b| b[:type].to_s != 'text' }
-            return normalized.map { |b| canonical_content_block(b) } if has_non_text
-
-            normalized.filter_map { |b| b[:text] if b[:type].to_s == 'text' }.join("\n\n")
           end
 
           def build_tools(raw)
@@ -584,18 +585,8 @@ module Legion
             tools.filter_map do |tool_call|
               next unless server_tool_resolved?(tool_call)
 
-              serialize_server_tool_result(tool_call.result)
-            end.join("\n")
-          end
-
-          def serialize_server_tool_result(result)
-            return '' if result.nil?
-            return result if result.is_a?(String)
-
-            Legion::JSON.dump(result)
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.client_translator.openai_chat.serialize_server_tool_result')
-            extract_content_text(result)
+              server_tool_exchange_text(tool_call: tool_call)
+            end.join
           end
 
           # M7/N8: one finish-reason policy. A provider-declared stop maps

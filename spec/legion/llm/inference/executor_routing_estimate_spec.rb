@@ -55,9 +55,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
       # Router#input_bound counts UTF-8 bytes of all textual content blocks.
       # 20 messages × ~400 words × ~5 bytes/word is tens of thousands of bytes;
       # a naive [:content].to_s estimator on an Array returns near-zero.
-      router = Legion::LLM::Router.new(
-        request: request, operation: :chat, body_model: request.metadata[:client_model]
-      )
+      router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: request.metadata[:client_model])
       expect(router.input_bound).to be > 5_000
     end
 

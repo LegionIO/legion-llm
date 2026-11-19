@@ -5,6 +5,7 @@ require 'faraday'
 
 require_relative '../publisher_identity'
 require_relative '../tools/special'
+require_relative '../tools/mcp_execution'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 require_relative 'executor/routing'
@@ -498,12 +499,17 @@ module Legion
           normalized_call = normalize_native_tool_call(tool_call)
           source = find_tool_source(normalized_call[:name])
           log.debug "[llm][executor] action=dispatch_native_tool_call round=#{round} tool=#{normalized_call[:name]} source_type=#{source[:type]}"
-          emit_tool_call_event(normalized_call, round, source: source)
-          result = ToolDispatcher.dispatch(
+          emit_tool_call_event(normalized_call, round, source: source, metadata: Tools::MCPExecution.metadata_for(source))
+          tool_exchange_id = Tracing.exchange_id
+          result = Tools::MCPExecution.dispatch(
             tool_call:   normalized_call,
             source:      source,
-            exchange_id: Tracing.exchange_id
+            definition:  native_dispatch_tools[normalized_call[:name].to_sym],
+            exchange_id: tool_exchange_id
           )
+          record_tool_execution(tool_call_id: normalized_call[:id], tool_name: normalized_call[:name],
+                                arguments: normalized_call[:arguments], source: source, result: result,
+                                exchange_id: tool_exchange_id)
           if result[:status] == :error
             err_detail = Legion::LLM::Tools::Dispatcher.error_log_detail(result)
             log.warn "[llm][native_tool_loop] action=tool_call_failed round=#{round} " \
@@ -643,7 +649,7 @@ module Legion
           text_parts.empty? ? nil : text_parts.join("\n\n")
         end
 
-        def emit_tool_call_event(tool_call, round, source: nil)
+        def emit_tool_call_event(tool_call, round, source: nil, metadata: {})
           tc_id   = tool_call_field(tool_call, :id)
           tc_name = tool_call_field(tool_call, :name)
           tc_args = tool_call_field(tool_call, :arguments)
@@ -656,7 +662,7 @@ module Legion
           typed_call = Legion::Extensions::Llm::Canonical::ToolCall.build(
             name: tc_name, id: tc_id, arguments: tc_args,
             source: canonical_source_symbol(source),
-            exchange_id: @exchange_id, started_at: started_at
+            exchange_id: @exchange_id, started_at: started_at, metadata: metadata
           )
 
           log.debug("[pipeline][tool-call] action=emit round=#{round} id=#{tc_id} tool=#{tc_name}")
@@ -681,6 +687,7 @@ module Legion
           Thread.current[:legion_current_tool_name] = tc_name
           Thread.current[:legion_current_tool_started_at] = started_at
 
+          @stream_observer&.server_tool_started(tool_call: typed_call)
           @tool_event_handler&.call(
             type: :tool_call, tool_call_id: tc_id, tool_name: tc_name,
             arguments: tc_args, round: round, started_at: started_at
@@ -701,7 +708,7 @@ module Legion
           result_str = result_str.delete("\x00")
           is_error = status.to_s == 'error' || (raw.is_a?(Hash) && (raw[:error] || raw['error']) ? true : false)
 
-          @pending_tool_history_mutex.synchronize do
+          completed_call = @pending_tool_history_mutex.synchronize do
             entry = @pending_tool_history.find { |e| e[:tool_call_id] == tc_id && e[:result].nil? }
             entry ||= @pending_tool_history[Thread.current[:legion_current_tool_history_index]]
             if entry
@@ -709,7 +716,7 @@ module Legion
               entry[:error]  = is_error
               if entry[:typed_call]
                 entry[:typed_call] = entry[:typed_call].with_result(
-                  result:      result_str[0, 4096],
+                  result:      result_str,
                   status:      is_error ? :error : :success,
                   duration_ms: duration_ms,
                   finished_at: finished_at
@@ -728,6 +735,7 @@ module Legion
           )
 
           publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
+          @stream_observer&.server_tool_completed(tool_call: completed_call)
         end
 
         def publish_tool_audit(tc_id, tc_name, result_str, is_error, duration_ms, started_at, finished_at)
@@ -925,6 +933,7 @@ module Legion
                                 end,
             input_tokens:       input_tokens,
             output_tokens:      output_tokens,
+            thinking_tokens:    provider_thinking_tokens_for_accounting,
             latency_ms:         latency_ms,
             wall_clock_ms:      wall_clock_ms,
             cost_usd:           cost_usd,
@@ -1279,9 +1288,6 @@ module Legion
           @extracted_tokens ||= extract_tokens
           return @extracted_tokens.thinking_tokens.to_i if @extracted_tokens.respond_to?(:thinking_tokens)
 
-          details = @extracted_tokens.output_tokens_details if @extracted_tokens.respond_to?(:output_tokens_details)
-          return details[:reasoning_tokens].to_i if details.is_a?(Hash) && details[:reasoning_tokens]
-
           0
         end
 
@@ -1409,10 +1415,8 @@ module Legion
             total:              input + output
           }
 
-          # Preserve output token breakdown (e.g. reasoning_tokens from Responses API)
-          if tokens.respond_to?(:output_tokens_details) && tokens.output_tokens_details.is_a?(Hash) && !tokens.output_tokens_details.empty?
-            result[:output_tokens_details] = tokens.output_tokens_details
-          end
+          # Preserve canonical accounting; client translators own wire spellings.
+          result[:thinking_tokens] = tokens.thinking_tokens if tokens.respond_to?(:thinking_tokens) && !tokens.thinking_tokens.nil?
 
           context_window = @resolved_offering_metadata&.dig(:limits, :context_window) ||
                            @resolved_offering_metadata&.dig(:context_window)
@@ -1550,15 +1554,13 @@ module Legion
 
         def response_tool_calls
           raw_tool_calls = @raw_response.respond_to?(:tool_calls) ? @raw_response.tool_calls : nil
-          return build_response_tool_calls(raw_tool_calls) if raw_tool_calls&.any?
-
-          # Fall back to typed ToolCall objects from pending history when the final
-          # model response completed after server-side tool execution.
-          typed_from_history = @pending_tool_history
-                               .filter_map { |entry| entry[:typed_call] }
-          return typed_from_history if typed_from_history.any?
-
-          []
+          current = raw_tool_calls&.any? ? build_response_tool_calls(raw_tool_calls) : []
+          # Earlier server rounds remain visible when the last round asks the
+          # client to execute a different tool. Execution IDs, not names, dedupe.
+          executed = @pending_tool_history.filter_map { |entry| entry[:typed_call] }
+                                          .select { |call| %i[special registry extension mcp].include?(call.source) && !call.result.nil? }
+          executed_ids = executed.map(&:id)
+          executed + current.reject { |call| executed_ids.include?(call.id) }
         end
 
         # G3: the response exit carries Canonical::ToolCall — one tool-call
@@ -1613,7 +1615,8 @@ module Legion
               status:      client_pending ? nil : (tool_call_field(tool_call, :status) || pending_data[:status] || timeline_data[:status]),
               duration_ms: tool_call_field(tool_call, :duration_ms) || pending_data[:duration_ms] || timeline_data[:duration_ms],
               result:      client_pending ? nil : (tool_call_field(tool_call, :result) || pending_data[:result] || timeline_data[:result]),
-              error:       client_pending ? nil : (tool_call_field(tool_call, :error) || pending_data[:error])
+              error:       client_pending ? nil : (tool_call_field(tool_call, :error) || pending_data[:error]),
+              metadata:    (tool_call_field(tool_call, :metadata) || {}).merge(pending_data[:metadata] || {})
             )
           end
         end
@@ -1631,7 +1634,8 @@ module Legion
             status:      typed_call&.status,
             duration_ms: typed_call&.duration_ms,
             result:      typed_call&.result || entry[:result],
-            error:       typed_call&.error || (entry[:result] if entry[:error])
+            error:       typed_call&.error || (entry[:result] if entry[:error]),
+            metadata:    typed_call&.metadata
           }.compact
         end
 

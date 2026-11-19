@@ -51,18 +51,18 @@ module Legion
             PROMPT
           end
 
-          # Propagate generation sampling params from the canonical request into
-          # the dispatch options hash. Uses .key? so that explicit 0 values are
-          # preserved (0 is a valid temperature, not the same as absent/nil).
+          # Reassemble the inference request's parameter projection once for
+          # dispatch. Token and stop constraints must travel with sampling;
+          # routing having seen a token cap does not enforce it at the provider.
           GENERATION_PARAMS = %i[temperature top_p top_k frequency_penalty presence_penalty seed].freeze
 
           def apply_generation_params!(options)
-            generation = @request.generation
-            return unless generation.is_a?(Hash)
-
-            GENERATION_PARAMS.each do |param|
-              options[param] = generation[param] if generation.key?(param)
-            end
+            params = @request.generation.slice(*GENERATION_PARAMS)
+            params[:max_tokens] = @request.tokens[:max]
+            params[:stop_sequences] = @request.stop[:sequences] unless @request.stop[:sequences].empty?
+            format = @request.response_format
+            params[:response_format] = format unless format.nil? || format[:type].to_s == 'text'
+            options[:params] = Legion::Extensions::Llm::Canonical::Params.build(**params.compact)
           end
 
           def native_dispatch_chat_options

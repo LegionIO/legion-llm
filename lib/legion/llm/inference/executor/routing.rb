@@ -74,19 +74,13 @@ module Legion
             )
           end
 
-          # SSOT v4 — build the per-request Router once. The Router derives
-          # required capabilities, input bound, context budget, and output tokens
-          # internally from the request and operation. No inventory-generation
-          # gate: an empty Registry yields a typed too_early/service_unavailable
-          # Rejection from next_lane, never a fabricated lane or a legacy fallback.
+          # Build immutable requirements within the per-request Router. An empty
+          # Registry is not a construction gate: routing returns a typed rejection
+          # from next_lane, never a fabricated lane or a legacy fallback.
           def build_ssot_router
             operation = @request.stream == true ? :stream_chat : :chat
             body_model = @request.metadata[:client_model]
-            @router = Legion::LLM::Router.new(
-              request:    @request,
-              operation:  operation,
-              body_model: body_model
-            )
+            @router = Legion::LLM::Router.new(request: @request, operation: operation, body_model: body_model)
             log.debug "[llm][executor] action=ssot_router_built operation=#{operation} " \
                       "output_tokens=#{@router.required_output_tokens}"
           end

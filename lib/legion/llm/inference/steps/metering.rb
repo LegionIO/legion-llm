@@ -68,7 +68,8 @@ module Legion
             input    = opts.fetch(:input_tokens, 0)
             output   = opts.fetch(:output_tokens, 0)
             thinking = opts.fetch(:thinking_tokens, 0)
-            total    = input + output + thinking
+            # Thinking is a reported subset of generated output tokens.
+            total    = input + output
             log.debug(
               "[llm][steps][metering] action=token_summary request_id=#{opts[:request_id]} " \
               "input=#{input} output=#{output} thinking=#{thinking} total=#{total}"

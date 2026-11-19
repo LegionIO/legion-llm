@@ -13,7 +13,8 @@ RSpec.describe Legion::LLM::Inference::Steps::Metering do
         latency_ms: 250, wall_clock_ms: 300, routing_reason: 'intent-match'
       )
       expect(event[:node_id]).to eq('node-1')
-      expect(event[:total_tokens]).to eq(160)
+      expect(event[:thinking_tokens]).to eq(10)
+      expect(event[:total_tokens]).to eq(150)
       expect(event[:latency_ms]).to eq(250)
       expect(event[:recorded_at]).to be_a(String)
     end

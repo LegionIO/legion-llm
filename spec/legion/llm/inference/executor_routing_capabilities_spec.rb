@@ -14,9 +14,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
                                                                                     ])
     end
 
-    # Helper: build the per-request Router and return it (carries operation,
-    # required_capabilities, input_bound, etc.).
-    def build_reqs(request)
+    # Exercise the executor's actual requirement-construction boundary.
+    def build_router(request)
       executor = described_class.new(request)
       executor.send(:build_ssot_router)
       executor.instance_variable_get(:@router)
@@ -29,11 +28,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   false
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.operation).to eq(:chat)
-      expect(reqs.required_capabilities).not_to include(:tools)
-      expect(reqs.required_capabilities).not_to include(:thinking)
+      expect(router.operation).to eq(:chat)
+      expect(router.required_capabilities).not_to include(:tools)
+      expect(router.required_capabilities).not_to include(:thinking)
     end
 
     it 'does not require :tools for plain streaming requests just because pinned tools exist' do
@@ -43,11 +42,11 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   true
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.operation).to eq(:stream_chat)
-      expect(reqs.required_capabilities).to include(:streaming)
-      expect(reqs.required_capabilities).not_to include(:tools)
+      expect(router.operation).to eq(:stream_chat)
+      expect(router.required_capabilities).to include(:streaming)
+      expect(router.required_capabilities).not_to include(:tools)
     end
 
     it 'requires :tools when the request explicitly includes client tools' do
@@ -57,9 +56,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         tools:    [{ name: 'client_echo', description: 'echo', input_schema: { type: 'object', properties: {} } }]
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.required_capabilities).to include(:tools)
+      expect(router.required_capabilities).to include(:tools)
     end
 
     it 'includes :thinking in required_capabilities only for explicit thinking requests' do
@@ -69,9 +68,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         thinking: { effort: :medium, budget: 1024 }
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.required_capabilities).to include(:thinking)
+      expect(router.required_capabilities).to include(:thinking)
     end
 
     it 'does not include :thinking for requests without explicit thinking config' do
@@ -81,9 +80,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         stream:   false
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.required_capabilities).not_to include(:thinking)
+      expect(router.required_capabilities).not_to include(:thinking)
     end
 
     it 'ignores payload client_model as a routing pin when body routing hints are disabled' do
@@ -95,24 +94,23 @@ RSpec.describe Legion::LLM::Inference::Executor do
         metadata: { client_model: 'gpt-5.5' }
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.model_pin).to be_nil
+      expect(router.model_pin).to be_nil
     end
 
     it 'honors payload client_model only when body routing hints are enabled' do
-      # allow_body_routing_hints is read live from [:llm][:router] by the Router's
-      # body-model-hint ladder — no SettingsState snapshot rebuild needed.
       Legion::Settings[:llm][:router][:allow_body_routing_hints] = true
+      Legion::LLM::Routing::SettingsState.reset!
       request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'hello' }],
         routing:  {},
         metadata: { client_model: 'gpt-5.5' }
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.model_pin).to eq('gpt-5.5')
+      expect(router.model_pin).to eq('gpt-5.5')
     ensure
       Legion::Settings[:llm][:router][:allow_body_routing_hints] = false
     end
@@ -124,9 +122,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
         client_model: 'auto'
       )
 
-      reqs = build_reqs(request)
+      router = build_router(request)
 
-      expect(reqs.model_pin).to eq('gemma-4-31b-it')
+      expect(router.model_pin).to eq('gemma-4-31b-it')
     end
   end
 end

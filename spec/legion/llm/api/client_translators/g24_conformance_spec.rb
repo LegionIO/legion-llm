@@ -146,19 +146,14 @@ RSpec.describe 'G24 execution-proxy contract — client translators' do
       output = formatted[:output]
       function_calls = output.select { |i| i[:type] == 'function_call' }
 
-      # Server-executed tools surface as completed function_call items so the
-      # model's prior call is visible; they MUST NOT be actionable
-      # (status != completed). Per G24 point 3.
-      function_calls.each do |fc|
-        expect(fc[:status]).to eq('completed'), "function_call should be completed, got #{fc.inspect}"
-        expect(fc[:name]).to eq('legion_list_all_tools')
-      end
-      expect(function_calls).not_to be_empty
-
-      # The result text is reachable in the output stream (completed
-      # function_call items carry it as a function_call_output sibling, OR
-      # the trailing message text mentions it — codex consumes either).
-      expect(formatted.to_s).to include('legion_list_all_tools, legion_apollo_search')
+      # This legacy fixture has no MCP provenance. Preserve it as visible
+      # content; responses_mcp_execution_spec covers the SDK-backed MCP shape.
+      # A completed function_call still requests execution from the client.
+      expect(function_calls).to be_empty
+      text = output.select { |item| item[:type] == 'message' }
+                   .flat_map { |item| item[:content] }.map { |part| part[:text] }.join
+      expect(text).to include('"id":"call_legion_001"', '"name":"legion_list_all_tools"', '"arguments":{"filter":"all"}')
+      expect(text).to include('LegionIO server tool result (call_legion_001):', 'legion_list_all_tools, legion_apollo_search')
     end
 
     it 'normalizes a continuation request with prior function_call+function_call_output items' do

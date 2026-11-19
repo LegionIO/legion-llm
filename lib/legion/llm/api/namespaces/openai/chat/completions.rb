@@ -130,6 +130,9 @@ module Legion
                       Legion::JSON.dump(response_body)
                     end
                   end
+                rescue Legion::LLM::Errors::InvalidRequest => e
+                  handle_exception(e, level: :warn, handled: true, operation: 'llm.api.namespaces.openai.chat.invalid_request')
+                  openai_error(e.message, type: 'invalid_request_error', status_code: 400)
                 rescue Legion::LLM::Errors::NoLaneAvailable => e
                   translate_no_lane_available(e, operation: 'llm.api.namespaces.openai.chat.no_lane')
                 rescue Legion::LLM::Errors::EscalationExhausted => e

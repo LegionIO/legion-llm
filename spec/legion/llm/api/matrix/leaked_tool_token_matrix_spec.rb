@@ -66,7 +66,7 @@ RSpec.describe '[matrix] leaked tool-call token synthesis × FakeProvider', type
     expect(server_result[:content].first[:text]).to include('echo:ping')
   end
 
-  it '/v1/responses — synthesizes the leaked token into a completed function_call, no raw markers' do
+  it '/v1/responses — synthesizes the leaked token into a visible server exchange, no raw markers' do
     FakeProvider.with_scenario(:tool_leaked_token) do
       post '/v1/responses',
            Legion::JSON.dump({ model: 'fake-default', input: 'do the thing' }),
@@ -80,14 +80,9 @@ RSpec.describe '[matrix] leaked tool-call token synthesis × FakeProvider', type
 
     expect(body[:status]).to eq('completed')
     function_calls = body[:output].select { |i| i[:type] == 'function_call' }
-    expect(function_calls).not_to be_empty
-    function_calls.each do |fc|
-      expect(fc[:status]).to eq('completed')
-      expect(fc[:name]).to eq('fake_legion_echo')
-    end
-    outputs = body[:output].select { |i| i[:type] == 'function_call_output' }
-    expect(outputs).not_to be_empty
-    outputs.each { |fco| expect(fco[:output].to_s).to include('echo:ping') }
+    expect(function_calls).to be_empty
+    call = body[:output].find { |item| item[:type] == 'mcp_call' }
+    expect(call).to include(name: 'fake_legion_echo', arguments: '{"value":"ping"}', output: 'echo:ping', status: 'completed')
   end
 
   it '/v1/chat/completions — synthesizes the leaked token; finish_reason stop, no raw markers' do

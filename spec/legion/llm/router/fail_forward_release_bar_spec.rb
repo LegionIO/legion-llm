@@ -14,7 +14,7 @@ require 'legion/llm/router'
 #   - Router.next_lane(requirements:, exclusions:, snapshot:)
 #     -> Router.new(request:, operation:, body_model:).next_lane
 #     (instance-per-request; fetches Registry.snapshot LIVE — seed the Registry)
-#   - RequestRequirements.build(..., estimated_input_bound: BUDGET)
+#   - Legacy requirements budget construction with estimated_input_bound: BUDGET
 #     -> context_budget = input_bound_for + tokens[:max]
 #     (set input_framing_overhead_tokens = 0 and use tokens[:max] to steer budget)
 #   - RequiredCapabilities.call
