@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.30] - 2026-11-19
+
+### Fixed
+- Correct the 64k default `llm.max_output_tokens` allowance to 64,000 tokens instead of 65,536, avoiding default-budget rejection on Bedrock models with a 64,000-token output ceiling. Preserve explicit client limits and operator overrides. Cover the registered default through synchronous and streaming client routing, canonical dispatch, and provider rendering. Refs #225.
+
 ## [0.16.29] - 2026-11-19
 
 ### Changed

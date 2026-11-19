@@ -12,7 +12,6 @@ RSpec.describe '[matrix] configured output budgets', type: :request do
 
   before do
     MatrixHelper.configure_for_fake!
-    Legion::Settings[:llm][:max_output_tokens] = 12_345
   end
   after { MatrixHelper.restore_started_state! }
 
@@ -23,9 +22,10 @@ RSpec.describe '[matrix] configured output budgets', type: :request do
     ['/v1/responses', :max_output_tokens, { input: 'Hello.' }]
   ].each do |path, limit_key, payload|
     [false, true].each do |stream|
-      [nil, 128].each do |explicit_limit|
-        it "uses one budget for #{path} #{limit_key}=#{explicit_limit.inspect}, stream=#{stream}" do
-          expected_limit = explicit_limit || 12_345
+      [[nil, 12_345], [128, 12_345], [nil, nil]].each do |explicit_limit, configured_limit|
+        it "uses one budget for #{path} #{limit_key}=#{explicit_limit.inspect}, configured=#{configured_limit.inspect}, stream=#{stream}" do
+          Legion::Settings[:llm][:max_output_tokens] = configured_limit if configured_limit
+          expected_limit = explicit_limit || configured_limit || 64_000
           routing_limits = []
           dispatches = []
           allow(Legion::LLM::Router).to receive(:new).and_wrap_original do |original, **args|

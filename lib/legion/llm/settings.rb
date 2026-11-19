@@ -21,7 +21,7 @@ module Legion
           background:                background_defaults,
           pipeline_async_post_steps: true,
           context_window:            250_000,
-          max_output_tokens:         65_536,
+          max_output_tokens:         64_000,
           default_model:             model_override,
           default_temperature:       0.9,
           default_provider:          nil,
