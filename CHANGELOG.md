@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.32] - 2026-11-19
+
+### Fixed
+- Normalize Apollo RAG result envelopes, deduplicate general and conversation-history facts, and enforce one combined strategy limit, including smaller GAIA context limits. Preserve retrieval order and metadata; filter excluded sources before deduplication and limiting. Empty fallbacks no longer raise, failed retrievals cannot inject stale entries, and skipped history lookups do not manufacture successful retrievals. Cover actual provider-bound canonical messages across all three client formats in synchronous and streaming execution. Fixes #195.
+
 ## [0.16.31] - 2026-11-19
 
 ### Fixed

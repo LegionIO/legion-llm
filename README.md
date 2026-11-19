@@ -109,6 +109,8 @@ The loop closes back up in the Inference pipeline, across three steps:
 - `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo — via the shared-store runner when available, falling back to `Legion::Apollo.retrieve(scope: :all)`, which merges local and shared results — and injects relevant knowledge into the request before it goes out.
 - `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries `Legion::Apollo::Local` — the local store only — for advisory context: tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
 
+RAG merges general and conversation-history results in retrieval order, removes excluded sources and duplicate facts, then applies one combined `llm.rag.full_limit` or `compact_limit`. A smaller GAIA context limit takes precedence. Duplicate identity uses a content hash when available, then a source-scoped entry ID, then content type and text. Failed retrievals contribute no entries; an explicit successful empty response remains distinct from an unavailable or skipped retrieval.
+
 The receipts for this loop aren't a separate claim: RAG-injected tokens are a recorded column in the lex-llm-ledger aggregates already published in [docs/curation-production-metrics.md](docs/curation-production-metrics.md).
 
 ### And everything else you'd expect from a production gateway
