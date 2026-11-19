@@ -1150,9 +1150,9 @@ bundle exec rubocop -A
 For the coordinated LLM release, publish shared `lex-llm` first, the provider
 gems next, and `legion-llm` last. The current targets are `lex-llm 0.8.8`,
 `lex-llm-vllm 0.4.9`, `lex-llm-anthropic 0.3.8`, and `lex-llm-bedrock 0.5.10`.
-Temporary companion commit pins apply only to pull-request CI. Main and scheduled
-CI resolve published gems, and release depends on those checks passing. A green
-PR run against companion commits does not satisfy the publication prerequisite.
+These companion versions are published. All CI runs resolve published gems;
+temporary companion commit pins have been removed. Release depends on CI passing
+against those published dependencies.
 
 ## License
 
