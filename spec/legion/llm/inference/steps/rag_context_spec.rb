@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'logger'
+require 'stringio'
 
 RSpec.describe Legion::LLM::Inference::Steps::RagContext do
   let(:klass) do
@@ -151,6 +153,69 @@ RSpec.describe Legion::LLM::Inference::Steps::RagContext do
   end
 
   describe '#step_rag_context' do
+    context 'when retrieved entries contain private knowledge' do
+      let(:private_values) { %w[PRIVATE_CONTENT_MARKER PRIVATE_RAW_MARKER PRIVATE_CONTEXT_MARKER PRIVATE_METADATA_MARKER PRIVATE_TAG_MARKER] }
+      let(:entries) do
+        entry = {
+          id:           'apollo-entry-42',
+          content_type: 'fact',
+          confidence:   0.8754,
+          distance:     0.1234,
+          content:      private_values[0],
+          raw_content:  private_values[1],
+          context:      { source: private_values[2] },
+          metadata:     { description: private_values[3] },
+          tags:         [private_values[4]]
+        }
+        [entry.freeze, entry.transform_keys(&:to_s).merge('id' => 'apollo-entry-43').freeze]
+      end
+      let(:output) { StringIO.new }
+      let(:logger) { Logger.new(output, level: level, formatter: proc { |severity, _time, _progname, message| "#{severity}: #{message}\n" }) }
+      let(:request) do
+        Legion::LLM::Inference::Request.build(
+          messages: [{ role: :user, content: 'what is pgvector?' }], context_strategy: :rag
+        )
+      end
+      let(:step) { klass.new(request) }
+
+      before do
+        apollo_runner = double('Knowledge', retrieve_relevant: { success: true, entries: entries, count: entries.size })
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', apollo_runner)
+        allow(step).to receive(:log).and_return(logger)
+      end
+
+      [Logger::DEBUG, Logger::INFO].each do |log_level|
+        context "with log level #{Logger::SEV_LABEL[log_level]}" do
+          let(:level) { log_level }
+
+          it 'keeps private data in enrichment and out of emitted logs' do
+            step.step_rag_context
+
+            expect(step.warnings).to be_empty
+            expect(step.enrichments['rag:context_retrieval'][:data][:entries]).to eq(entries)
+            private_values.each { |value| expect(output.string).not_to include(value) }
+            expect(output.string).not_to include('ANY:')
+            expect(output.string).to include('entry_count=2')
+          end
+
+          it 'emits entry IDs and allowlisted diagnostics only at DEBUG' do
+            step.step_rag_context
+
+            if log_level == Logger::DEBUG
+              %w[apollo-entry-42 apollo-entry-43].each do |id|
+                entry_log = output.string.lines.find { |line| line.include?(id) }
+                expect(entry_log).to start_with('DEBUG:')
+                expect(entry_log).to include('content_type=fact', 'confidence=0.875', 'distance=0.123',
+                                             "content_chars=#{private_values[0].length}", "request_id=#{request.id}")
+              end
+            else
+              expect(output.string).not_to include('apollo-entry-42', 'apollo-entry-43')
+            end
+          end
+        end
+      end
+    end
+
     it 'skips when strategy is :none via explicit override' do
       request = Legion::LLM::Inference::Request.build(
         messages:         [{ role: :user, content: 'what is pgvector?' }],

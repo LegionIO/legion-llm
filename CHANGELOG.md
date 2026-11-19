@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.20] - 2026-11-18
+
+### Fixed
+- Replace unconditional RAG entry dumps with lazy DEBUG diagnostics limited to Apollo entry ID, content type, numeric confidence/distance, content length, and request/strategy context. Retrieved text, raw source, tags, and arbitrary metadata stay out of these logs while enrichment retains the complete entries. Move the adjacent strategy diagnostic to DEBUG ([#193](https://github.com/LegionIO/legion-llm/issues/193)).
+
 ## [0.16.19] - 2026-11-18
 
 ### Fixed
