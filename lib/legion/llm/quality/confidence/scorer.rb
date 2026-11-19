@@ -12,38 +12,12 @@ module Legion
     #   3. heuristic — derived from response content characteristics
     #
     # Band boundaries are read from Legion::Settings[:llm][:confidence][:bands] when
-    # Legion::Settings is available, otherwise the DEFAULT_BANDS constants are used.
+    # configured, otherwise the registered confidence defaults are used.
     # Per-call overrides can be passed as options[:confidence_bands].
     module Quality
       module Confidence
         module Scorer
           extend Legion::Logging::Helper
-
-          # Default band boundaries. Keys are the *lower* boundary of that band name:
-          #   score <  :low       -> :very_low
-          #   score <  :medium    -> :low
-          #   score <  :high      -> :medium
-          #   score <  :very_high -> :high
-          #   score >= :very_high -> :very_high
-          DEFAULT_BANDS = {
-            low:       0.3,
-            medium:    0.5,
-            high:      0.7,
-            very_high: 0.9
-          }.freeze
-
-          # Penalty weights used in heuristic scoring.
-          HEURISTIC_WEIGHTS = {
-            refusal:            -0.8,
-            empty:              -1.0,
-            truncated:          -0.4,
-            repetition:         -0.5,
-            json_parse_failure: -0.6,
-            too_short:          -0.3
-          }.freeze
-
-          # Bonus applied when structured output parse succeeds.
-          STRUCTURED_OUTPUT_BONUS = 0.1
 
           # Hedging language patterns that reduce confidence.
           HEDGING_PATTERNS = [
@@ -97,7 +71,7 @@ module Legion
             private
 
             # Resolve band configuration.  Per-call overrides win, then settings,
-            # then DEFAULT_BANDS.
+            # then the registered defaults.
             def resolve_bands(per_call_override)
               base = settings_bands
               return base.merge(per_call_override) if per_call_override.is_a?(Hash)
@@ -106,10 +80,9 @@ module Legion
             end
 
             def settings_bands
-              conf = Legion::Settings[:llm][:confidence][:bands]
-              return DEFAULT_BANDS unless conf.is_a?(Hash)
-
-              DEFAULT_BANDS.merge(conf.transform_keys(&:to_sym))
+              Legion::LLM::Settings.confidence_defaults[:bands].to_h do |key, _|
+                [key, Legion::LLM::Settings.resolve(:confidence, :bands, key)]
+              end
             end
 
             # Attempt to derive a score from logprobs attached to the response.
@@ -124,7 +97,7 @@ module Legion
               # Convert average log-probability to a probability-like score in [0, 1].
               # avg_lp is in (-inf, 0]; e^0 = 1.0 (perfect), e^(-5) ≈ 0.007 (very uncertain).
               # We clamp at -5 so very negative values still map to > 0.
-              Math.exp([avg_lp, -5.0].max)
+              Math.exp([avg_lp, Legion::LLM::Settings.resolve(:confidence, :min_logprob)].max)
             rescue StandardError => e
               handle_exception(e, level: :warn, operation: 'llm.confidence_scorer.extract_logprobs')
               nil
@@ -160,22 +133,22 @@ module Legion
 
               if content.to_s.strip.empty? && !has_tool_calls
                 signals[:empty] = true
-                penalty += HEURISTIC_WEIGHTS[:empty].abs
+                penalty += Legion::LLM::Settings.resolve(:confidence, :heuristic_weights, :empty).abs
               else
                 failures = quality_result ? quality_result.failures : detect_failures(content, options)
 
                 failures.each do |failure|
-                  weight = HEURISTIC_WEIGHTS[failure]
+                  weight = (Legion::LLM::Settings.resolve(:confidence, :heuristic_weights, failure) if Legion::LLM::Settings.confidence_defaults[:heuristic_weights].key?(failure))
                   next unless weight
 
                   signals[failure] = true
                   penalty += weight.abs
                 end
 
-                if quality_setting(:hedging, false)
+                if quality_setting(:hedging)
                   hedges = count_hedges(content)
                   if hedges.positive?
-                    hedge_penalty = [hedges * 0.05, 0.3].min
+                    hedge_penalty = [hedges * Legion::LLM::Settings.resolve(:confidence, :hedge_penalty), Legion::LLM::Settings.resolve(:confidence, :max_hedge_penalty)].min
                     signals[:hedging] = hedges
                     penalty += hedge_penalty
                   end
@@ -183,7 +156,7 @@ module Legion
 
                 if options[:json_expected] && !failures.include?(:json_parse_failure)
                   signals[:structured_output_valid] = true
-                  penalty -= STRUCTURED_OUTPUT_BONUS
+                  penalty -= Legion::LLM::Settings.resolve(:confidence, :structured_output_bonus)
                 end
               end
 
@@ -195,22 +168,21 @@ module Legion
               return [] if content.to_s.strip.empty?
 
               failures = []
-              threshold = options.fetch(:quality_threshold, Quality::Checker::DEFAULT_QUALITY_THRESHOLD)
-              failures << :too_short if quality_setting(:too_short, false) && content.length < threshold
-              failures << :truncated if quality_setting(:truncated, false) && truncated?(content)
-              failures << :refusal if quality_setting(:refusal, false) && refusal?(content)
+              threshold = options.fetch(:quality_threshold, Legion::LLM::Settings.resolve(:quality, :threshold))
+              failures << :too_short if quality_setting(:too_short) && content.length < threshold
+              failures << :truncated if quality_setting(:truncated) && truncated?(content)
+              failures << :refusal if quality_setting(:refusal) && refusal?(content)
               failures << :repetition if repetitive?(content)
               failures << :json_parse_failure if options[:json_expected] && !valid_json?(content)
               failures
             end
 
-            def quality_setting(key, default)
-              value = Legion::Settings.dig(:llm, :quality, key)
-              value.nil? ? default : value
+            def quality_setting(key)
+              Legion::LLM::Settings.resolve(:quality, key)
             end
 
             def truncated?(content)
-              return false if content.length < 100
+              return false if content.length < quality_setting(:truncation_min_chars)
 
               last_chars = content[-3..]
               last_chars&.match?(/\w{3}\z/) &&
@@ -223,14 +195,15 @@ module Legion
             end
 
             def repetitive?(content)
-              return false if content.length < Quality::Checker::REPETITION_MIN_LENGTH * Quality::Checker::REPETITION_THRESHOLD
+              width = quality_setting(:repetition_min_chars)
+              count = quality_setting(:repetition_count)
+              return false if content.length < width * count
 
               seen = {}
-              step = Quality::Checker::REPETITION_MIN_LENGTH
-              (0..(content.length - step)).step(step) do |i|
-                chunk = content[i, step]
+              (0..(content.length - width)).step(width) do |i|
+                chunk = content[i, width]
                 seen[chunk] = (seen[chunk] || 0) + 1
-                return true if seen[chunk] >= Quality::Checker::REPETITION_THRESHOLD
+                return true if seen[chunk] >= count
               end
               false
             end

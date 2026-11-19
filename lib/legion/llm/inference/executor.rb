@@ -731,7 +731,7 @@ module Legion
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str[0, 4096], result_size: result_str.bytesize, status: is_error ? :error : :success,
+            result: result_str[0, Legion::LLM::Settings.resolve(:compliance, :tool_audit_result_max_chars)], result_size: result_str.bytesize, status: is_error ? :error : :success,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
 
@@ -750,6 +750,7 @@ module Legion
         def flush_deferred_tool_audits
           return if @deferred_tool_audits.empty?
 
+          result_limit = Legion::LLM::Settings.resolve(:compliance, :tool_audit_result_max_chars)
           audits = @deferred_tool_audits.dup
           @deferred_tool_audits.clear
 
@@ -775,7 +776,7 @@ module Legion
                   started_at:  audit[:started_at],
                   finished_at: audit[:finished_at]
                 },
-                result:          audit[:result_str][0, 4096],
+                result:          audit[:result_str][0, result_limit],
                 caller:          caller_data,
                 classification:  classification,
                 tracing:         tracing,

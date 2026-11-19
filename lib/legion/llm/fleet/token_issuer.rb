@@ -12,10 +12,6 @@ module Legion
       TokenError = ::Legion::Extensions::Llm::Fleet::TokenError unless const_defined?(:TokenError, false)
 
       module TokenIssuer
-        ISSUER = 'legion-llm'
-        AUDIENCE = 'lex-llm-fleet-worker'
-        ALGORITHM = 'HS256'
-
         module_function
 
         def issue(payload)
@@ -86,20 +82,19 @@ module Legion
         end
 
         def issuer
-          auth_setting(:issuer, default: ISSUER)
+          auth_setting(:issuer)
         end
 
         def audience
-          auth_setting(:audience, default: AUDIENCE)
+          auth_setting(:audience)
         end
 
         def algorithm
-          auth_setting(:algorithm, default: ALGORITHM)
+          auth_setting(:algorithm)
         end
 
-        def auth_setting(key, default:)
-          val = Legion::Settings[:llm][:fleet][:auth][key]
-          val.nil? ? default : val
+        def auth_setting(key)
+          Legion::LLM::Settings.resolve(:fleet, :auth, key)
         end
 
         def signing_key

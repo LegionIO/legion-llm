@@ -465,4 +465,12 @@ RSpec.describe Legion::LLM::Inference::Steps::Debate do
       ).at_least(:once)
     end
   end
+  it 'uses configured judge confidence and metadata clipping' do
+    Legion::Settings[:llm][:debate].merge!(summary_max_chars: 4, judge_confidence: { uncertain: 0.2, decisive: 0.95, default: 0.6 })
+    host = host_class.new(base_request)
+    expect(host.send(:estimate_judge_confidence, 'uncertain')).to eq(0.2)
+    expect(host.send(:estimate_judge_confidence, 'clearly stronger')).to eq(0.95)
+    expect(host.send(:estimate_judge_confidence, 'other answer')).to eq(0.6)
+    expect(host.send(:parse_judge_output, 'Evaluation: longer evaluation')).to include(evaluation: 'long...')
+  end
 end

@@ -18,13 +18,12 @@ module Legion
         end
 
         def claude_directories
-          home = ::File.expand_path('~')
           dirs = []
 
-          skills_dir = ::File.join(home, '.claude', 'skills')
+          skills_dir = ::File.expand_path(Legion::LLM::Settings.resolve(:skills, :discovery_roots, :claude_skills))
           dirs << skills_dir if ::File.directory?(skills_dir)
 
-          plugins_dir = ::File.join(home, '.claude', 'plugins')
+          plugins_dir = ::File.expand_path(Legion::LLM::Settings.resolve(:skills, :discovery_roots, :claude_plugins))
           if ::File.directory?(plugins_dir)
             ::Dir.glob(::File.join(plugins_dir, '*', 'skills')).each do |skill_subdir|
               dirs << skill_subdir if ::File.directory?(skill_subdir)
@@ -35,22 +34,22 @@ module Legion
         end
 
         def codex_directories
-          candidate = ::File.join(::File.expand_path('~'), '.codex', 'skills')
+          candidate = ::File.expand_path(Legion::LLM::Settings.resolve(:skills, :discovery_roots, :codex_skills))
           ::File.directory?(candidate) ? [candidate] : []
         end
 
         def claude_auto_discover?
-          Legion::Settings.dig(:llm, :skills, :auto_discover, :claude) != false
+          Legion::LLM::Settings.resolve(:skills, :auto_discover, :claude) == true
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.skills.external_discovery.claude_auto_discover')
-          true
+          false
         end
 
         def codex_auto_discover?
-          Legion::Settings.dig(:llm, :skills, :auto_discover, :codex) != false
+          Legion::LLM::Settings.resolve(:skills, :auto_discover, :codex) == true
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.skills.external_discovery.codex_auto_discover')
-          true
+          false
         end
       end
     end

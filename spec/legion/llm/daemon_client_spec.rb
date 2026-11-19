@@ -11,13 +11,13 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   # constants
   # ──────────────────────────────────────────────
-  describe 'constants' do
-    it 'defines HEALTH_CACHE_TTL as 30' do
-      expect(described_class::HEALTH_CACHE_TTL).to eq(30)
+  describe 'registered timeout defaults' do
+    it 'registers the health cache TTL' do
+      expect(Legion::LLM::Settings.resolve(:daemon, :health_cache_ttl)).to eq(30)
     end
 
-    it 'defines DEFAULT_TIMEOUT as 60' do
-      expect(described_class::DEFAULT_TIMEOUT).to eq(60)
+    it 'registers the HTTP read timeout' do
+      expect(Legion::LLM::Settings.resolve(:daemon, :read_timeout)).to eq(60)
     end
   end
 
@@ -187,7 +187,7 @@ RSpec.describe Legion::LLM::DaemonClient do
         # Simulate TTL expiry by manipulating timestamp
         described_class.instance_variable_set(:@health_checked_at,
                                               Process.clock_gettime(Process::CLOCK_MONOTONIC) -
-                                              described_class::HEALTH_CACHE_TTL - 1)
+                                              Legion::LLM::Settings.resolve(:daemon, :health_cache_ttl) - 1)
 
         expect(described_class).to receive(:check_health).and_return(true)
         described_class.available?
@@ -548,7 +548,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       allow(http).to receive(:use_ssl=)
       allow(http).to receive(:open_timeout=)
       allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
-      expect(http).to receive(:read_timeout=).with(described_class::DEFAULT_TIMEOUT)
+      expect(http).to receive(:read_timeout=).with(Legion::LLM::Settings.resolve(:daemon, :read_timeout))
       allow(Net::HTTP).to receive(:new).and_return(http)
 
       described_class.http_post('/api/llm/chat', {})

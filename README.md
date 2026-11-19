@@ -272,6 +272,10 @@ When enabled, validates `Authorization: Bearer <token>` or `x-api-key` headers a
 
 ## Configuration
 
+Runtime tunables and their defaults are owned by [`settings.rb`](lib/legion/llm/settings.rb)
+and its existing `settings/` modules. See [runtime settings](RUNTIME_SETTINGS.md)
+for units, override behavior, storage paths and pool lifecycle.
+
 Provider defaults now live in each `lex-llm-*` provider extension. `legion-llm` ships an empty `providers: {}` hash; settings files and extension registrations populate it at runtime.
 
 Add to your LegionIO settings directory (e.g. `~/.legionio/settings/llm.json`):

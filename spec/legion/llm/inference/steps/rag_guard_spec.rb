@@ -77,4 +77,13 @@ RSpec.describe Legion::LLM::Inference::Steps::RagGuard do
       expect(step.warnings).to be_empty
     end
   end
+  it 'uses the registered non-blocking default when the key is missing' do
+    Legion::Settings[:llm][:rag_guard] = { threshold: 0.8 }
+    allow(Legion::LLM::Hooks::RagGuard).to receive(:check_rag_faithfulness)
+      .with(hash_including(threshold: 0.8)).and_return(faithful: false, details: 'contradicts source')
+    step = klass.new
+    expect { step.check_rag_faithfulness }.not_to raise_error
+    expect(step.audit[:'rag:faithfulness'][:outcome]).to eq(:failure)
+    expect(step.warnings).not_to be_empty
+  end
 end

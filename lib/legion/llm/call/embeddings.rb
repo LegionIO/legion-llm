@@ -20,13 +20,7 @@ module Legion
       module Embeddings
         extend Legion::Logging::Helper
 
-        # The authoritative, provider-neutral prefix policy lives in settings.
-        PREFIX_REGISTRY = {
-          'nomic-embed-text'  => { document: 'search_document: ', query: 'search_query: ' },
-          'mxbai-embed-large' => { query: 'Represent this sentence for searching relevant passages: ' }
-        }.freeze
         CHARS_PER_TOKEN = 4
-        EMBED_CHUNK_TARGET_TOKENS = 512
         CACHE_NORMALIZATION = 'none'
 
         class << self
@@ -282,8 +276,10 @@ module Legion
           end
 
           def cache_ttl
-            ttl = cache_settings[:ttl]
-            ttl.is_a?(Numeric) && ttl.positive? ? ttl.to_i : Cache::DEFAULT_TTL
+            ttl = Legion::LLM::Settings.resolve(:embedding, :cache, :ttl)
+            raise ArgumentError, 'embedding.cache.ttl must be a positive number' unless ttl.is_a?(Numeric) && ttl.real? && ttl.finite? && ttl.positive?
+
+            ttl.ceil
           end
 
           def coerce_text(value:, **)
@@ -305,9 +301,10 @@ module Legion
           end
 
           def chunk_char_budget(attempt_context:, **)
+            target_tokens = Legion::LLM::Settings.resolve(:embedding, :chunk_target_tokens)
             evidence = attempt_context.lane.context_evidence
-            context_tokens = evidence&.known? ? evidence.value.to_i : EMBED_CHUNK_TARGET_TOKENS
-            tokens = [context_tokens, EMBED_CHUNK_TARGET_TOKENS].min
+            context_tokens = evidence&.known? ? evidence.value.to_i : target_tokens
+            tokens = [context_tokens, target_tokens].min
             tokens.positive? ? tokens * CHARS_PER_TOKEN : nil
           end
 
@@ -344,7 +341,7 @@ module Legion
           def chunk_boundary(slice:, max_chars:, **)
             candidates = [slice.rindex("\n\n"), slice.rindex("\n"), slice.rindex('. '), slice.rindex(' ')]
             boundary = candidates.compact.max
-            return max_chars unless boundary && boundary >= (max_chars * 0.5)
+            return max_chars unless boundary && boundary >= (max_chars * Legion::LLM::Settings.resolve(:embedding, :chunk_boundary_ratio))
 
             boundary + 1
           end

@@ -164,4 +164,16 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Tiers' do
       expect(result[:data][:models]).to be_an(Array)
     end
   end
+  it 'rebuilds the cache after the configured TTL' do
+    Legion::Settings[:llm][:api][:tiers_cache_ttl] = 2
+    cache = Legion::LLM::API::Namespaces::Native::Tiers
+    allow(Time).to receive(:now).and_return(Time.at(100))
+    cache.tiers_tree
+    allow(Time).to receive(:now).and_return(Time.at(101))
+    cache.tiers_tree
+    expect(Legion::LLM::API::Native::Tiers).to have_received(:build_tiers_tree).once
+    allow(Time).to receive(:now).and_return(Time.at(103))
+    cache.tiers_tree
+    expect(Legion::LLM::API::Native::Tiers).to have_received(:build_tiers_tree).twice
+  end
 end

@@ -12,9 +12,6 @@ module Legion
       module DaemonClient
         extend Legion::Logging::Helper
 
-        HEALTH_CACHE_TTL = 30
-        DEFAULT_TIMEOUT  = 60
-
         module_function
 
         def state_mutex
@@ -23,14 +20,14 @@ module Legion
 
         # Returns true if the daemon is reachable and healthy.
         # Returns false immediately if daemon_url is nil.
-        # Caches a positive health check for HEALTH_CACHE_TTL seconds.
+        # Caches a positive health check for the configured health_cache_ttl seconds.
         # An unhealthy result is not cached — rechecks on every call.
         def available?
           return false if daemon_url.nil?
 
           now = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
           cached_healthy = state_mutex.synchronize do
-            @healthy == true && @health_checked_at && (now - @health_checked_at) < HEALTH_CACHE_TTL
+            @healthy == true && @health_checked_at && (now - @health_checked_at) < Legion::LLM::Settings.resolve(:daemon, :health_cache_ttl)
           end
           return true if cached_healthy
 
@@ -106,8 +103,8 @@ module Legion
           uri     = URI.parse("#{daemon_url}#{path}")
           http    = Net::HTTP.new(uri.host, uri.port)
           http.use_ssl = (uri.scheme == 'https')
-          http.open_timeout = 2
-          http.read_timeout = 2
+          http.open_timeout = Legion::LLM::Settings.resolve(:daemon, :health_open_timeout)
+          http.read_timeout = Legion::LLM::Settings.resolve(:daemon, :health_read_timeout)
           request = Net::HTTP::Get.new(uri.request_uri)
           request['Content-Type'] = 'application/json'
           http.request(request)
@@ -117,7 +114,7 @@ module Legion
         # Accepts a full messages array and optional tool schemas.
         # Returns a status hash with structured inference fields on success.
         def inference(messages:, tools: [], model: nil, provider: nil, caller: nil, conversation_id: nil,
-                      timeout: 120)
+                      timeout: Legion::LLM::Settings.resolve(:daemon, :inference_timeout))
           body = { messages: messages, tools: tools }
           body[:model]           = model           if model
           body[:provider]        = provider        if provider
@@ -135,11 +132,11 @@ module Legion
         # Builds and sends a POST request with a JSON body.
         # Returns Net::HTTPResponse.
         # The optional timeout: keyword overrides the default read timeout.
-        def http_post(path, body, timeout: DEFAULT_TIMEOUT)
+        def http_post(path, body, timeout: Legion::LLM::Settings.resolve(:daemon, :read_timeout))
           uri     = URI.parse("#{daemon_url}#{path}")
           http    = Net::HTTP.new(uri.host, uri.port)
           http.use_ssl = (uri.scheme == 'https')
-          http.open_timeout = 5
+          http.open_timeout = Legion::LLM::Settings.resolve(:daemon, :open_timeout)
           http.read_timeout = timeout
           request = Net::HTTP::Post.new(uri.request_uri)
           request['Content-Type'] = 'application/json'

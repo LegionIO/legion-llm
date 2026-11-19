@@ -69,24 +69,16 @@ module Legion
 
           private
 
-          def rag_guard_settings
-            Legion::Settings[:llm][:rag_guard]
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_guard.settings')
-            {}
-          end
-
-          def rag_guard_setting(key, default)
-            value = rag_guard_settings[key]
-            value.nil? ? default : value
+          def rag_guard_setting(key)
+            Legion::LLM::Settings.resolve(:rag_guard, key)
           end
 
           def rag_block_on_failure?
-            rag_guard_setting(:block_on_failure, true)
+            rag_guard_setting(:block_on_failure)
           end
 
           def rag_faithfulness_threshold
-            rag_guard_setting(:threshold, 0.7)
+            rag_guard_setting(:threshold)
           end
 
           def record_rag_faithfulness_audit(outcome, result, detail: nil)

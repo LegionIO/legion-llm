@@ -62,33 +62,22 @@ module Legion
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture')
           end
 
-          EMBED_MAX_CHARS = 2000
-
           private
 
           def knowledge_capture_enabled?
-            knowledge_capture_setting(:enabled, true) == true
+            knowledge_capture_setting(:enabled) == true
           end
 
           def knowledge_capture_writeback_enabled?
-            knowledge_capture_setting(:writeback_enabled, true) == true
+            knowledge_capture_setting(:writeback_enabled) == true
           end
 
           def knowledge_capture_local_ingest_enabled?
-            knowledge_capture_setting(:local_ingest_enabled, true) == true
+            knowledge_capture_setting(:local_ingest_enabled) == true
           end
 
-          def knowledge_capture_setting(key, default)
-            settings = Legion::Settings[:llm][:knowledge_capture]
-            return default unless settings.is_a?(Hash)
-
-            return settings[key] if settings.key?(key)
-
-            string_key = key.to_s
-            settings.key?(string_key) ? settings[string_key] : default
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.knowledge_capture.settings')
-            default
+          def knowledge_capture_setting(key)
+            Legion::LLM::Settings.resolve(:knowledge_capture, key)
           end
 
           def local_capture_enabled?
@@ -112,7 +101,7 @@ module Legion
               return
             end
 
-            content = content[0, EMBED_MAX_CHARS] if content.length > EMBED_MAX_CHARS
+            content = content[0, knowledge_capture_setting(:max_content_chars)]
 
             model = response.routing[:model].to_s
             tags  = ['llm_response', model].reject(&:empty?)
@@ -122,7 +111,7 @@ module Legion
               content:        content,
               tags:           tags,
               source_channel: 'llm_pipeline',
-              confidence:     0.8
+              confidence:     knowledge_capture_setting(:confidence)
             )
           rescue StandardError => e
             @warnings << "local_knowledge_capture error: #{e.message}"

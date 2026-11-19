@@ -6,12 +6,6 @@ module Legion
     module Scheduling
       extend Legion::Logging::Helper
 
-      # Default peak hours in UTC: 14:00-22:00 (9 AM - 5 PM CT)
-      DEFAULT_PEAK_RANGE = (14..22)
-
-      # Intents that are eligible for deferral during peak hours.
-      DEFAULT_DEFER_INTENTS = %i[batch background maintenance].freeze
-
       class << self
         # Returns true when off-peak scheduling is enabled in settings.
         def enabled?
@@ -76,24 +70,29 @@ module Legion
 
         private
 
+        def default_peak_range
+          start_hour, end_hour = Legion::LLM::Settings.scheduling_defaults.fetch(:peak_hours_utc).split('-').map(&:to_i)
+          (start_hour..end_hour)
+        end
+
         def peak_range
           raw = Legion::Settings.dig(:llm, :scheduling, :peak_hours_utc)
-          return DEFAULT_PEAK_RANGE unless raw.is_a?(String) && raw.include?('-')
+          return default_peak_range unless raw.is_a?(String) && raw.include?('-')
 
           parts = raw.split('-')
-          return DEFAULT_PEAK_RANGE unless parts.size == 2
+          return default_peak_range unless parts.size == 2
 
           start_h = Integer(parts[0], 10)
           end_h   = Integer(parts[1], 10)
           (start_h..end_h)
         rescue ArgumentError => e
           handle_exception(e, level: :warn, handled: true, operation: 'llm.scheduling.peak_range')
-          DEFAULT_PEAK_RANGE
+          default_peak_range
         end
 
         def defer_intents
           raw = Legion::Settings.dig(:llm, :scheduling, :defer_intents)
-          return DEFAULT_DEFER_INTENTS unless raw.is_a?(Array)
+          return Legion::LLM::Settings.scheduling_defaults.fetch(:defer_intents).map(&:to_sym) unless raw.is_a?(Array)
 
           raw.map { |i| i.to_s.to_sym }
         end

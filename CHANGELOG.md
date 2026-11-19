@@ -1,5 +1,12 @@
 # Legion LLM Changelog
 
+## [0.16.26] - 2026-11-19
+
+### Fixed
+- Make registered settings the owner of runtime timeouts, curation/compression budgets, storage paths, cache timing, retention caps, quality/reflection policy, moderation/upload limits, native helper limits, diagnostic clipping and shadow sampling. Remove duplicate inline defaults while preserving request-owned routing snapshots and explicit overrides. Fixes #229.
+- Missing knowledge-capture, RAG-blocking and external skill-discovery flags now inherit their disabled registered defaults. Partial curation settings inherit the registered 120,000-token context target and 10,000-character tool-result threshold; prompt caching inherits its registered enabled default. Embedding cache TTL inherits its own 86,400-second policy, not the generic cache TTL.
+- Validate newly configurable resource bounds, preserve valid zero values, and reject malformed settings. Resolve native chat pool size on first use; both file dialects, uploads and batch output share `llm.files.storage_path`. Existing upload environment overrides remain supported by the settings defaults. See the runtime settings reference for units and reload behavior.
+
 ## [0.16.25] - 2026-11-19
 
 ### Fixed

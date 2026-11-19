@@ -43,7 +43,7 @@ module Legion
             result
           end
 
-          def summarize_messages(messages, max_tokens: 2000)
+          def summarize_messages(messages, max_tokens: Legion::LLM::Settings.resolve(:compressor, :summary_token_threshold))
             return { summary: '', original_count: 0 } if messages.nil? || messages.empty?
 
             text = messages.map { |m| "#{m[:role]}: #{m[:content]}" }.join("\n\n")
@@ -70,19 +70,19 @@ module Legion
           # @param messages [Array<Hash>] messages with :role and :content keys
           # @param threshold [Float] similarity threshold (0.0-1.0) above which messages are considered duplicates
           # @return [Hash] { messages: Array, removed: Integer, original_count: Integer }
-          DEDUP_WINDOW = 20
-
-          def deduplicate_messages(messages, threshold: 0.85)
+          def deduplicate_messages(messages, threshold: Legion::LLM::Settings.resolve(:context_curation, :dedup_threshold))
             return { messages: [], removed: 0, original_count: 0 } if messages.nil? || messages.empty?
 
             kept = []
             removed = 0
+            window_size = Legion::LLM::Settings.resolve(:compressor, :dedup_window)
+            min_chars = Legion::LLM::Settings.resolve(:compressor, :dedup_min_chars)
 
             messages.reverse_each do |msg|
               content = msg[:content].to_s
-              next kept.unshift(msg) if content.length < 20
+              next kept.unshift(msg) if content.length < min_chars
 
-              window = kept.first(DEDUP_WINDOW)
+              window = kept.first(window_size)
               duplicate = window.any? do |existing|
                 next false unless existing[:role] == msg[:role]
 
@@ -103,7 +103,7 @@ module Legion
             { messages: kept, removed: removed, original_count: messages.size }
           end
 
-          def auto_compact(messages, target_tokens:, preserve_recent: 10)
+          def auto_compact(messages, target_tokens:, preserve_recent: Legion::LLM::Settings.resolve(:conversation, :preserve_recent))
             preserve_recent = 1 unless preserve_recent.to_i.positive?
             return messages if messages.size <= preserve_recent
 
@@ -111,7 +111,8 @@ module Legion
             older  = messages[0..-(preserve_recent + 1)]
 
             tokens_before = estimate_tokens(messages)
-            summarized = summarize_messages(older, max_tokens: target_tokens / 2)
+            summary_tokens = [(target_tokens * Legion::LLM::Settings.resolve(:compressor, :summary_budget_ratio)).floor, 1].max
+            summarized = summarize_messages(older, max_tokens: summary_tokens)
 
             compaction_msg = {
               role:     'system',
@@ -202,7 +203,7 @@ module Legion
             return nil unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:chat_direct)
 
             payload = {
-              message: "#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * 8]}"
+              message: "#{SUMMARIZE_PROMPT}\n\n#{text[0, max_tokens * Legion::LLM::Settings.resolve(:compressor, :summary_input_chars_per_token)]}"
             }
             model = summarize_model
             if model

@@ -280,7 +280,7 @@ module Legion
             end
 
             def self.files_dir
-              ::File.join(::Dir.home, '.legionio', 'data', 'files')
+              ::File.expand_path(Legion::LLM::Settings.resolve(:files, :storage_path))
             end
 
             def self.serialize_batch(entry)

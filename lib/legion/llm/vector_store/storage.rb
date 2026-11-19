@@ -83,8 +83,6 @@ module Legion
           raise
         end
 
-        MAX_SCAN_CHUNKS = 10_000
-
         def generate_id(prefix)
           "#{prefix}_#{SecureRandom.hex(10)}"
         end
@@ -107,7 +105,7 @@ module Legion
           (dot / denom).clamp(-1.0, 1.0)
         end
 
-        def chunk_text(text, max_chars: 512)
+        def chunk_text(text, max_chars: Legion::LLM::Settings.resolve(:vector_store, :chunk_target_chars))
           paragraphs = text.split(/\n\n+/).map(&:strip).reject(&:empty?)
           chunks     = []
           current    = +''

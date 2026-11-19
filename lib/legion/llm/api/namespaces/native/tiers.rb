@@ -13,7 +13,6 @@ module Legion
           module Tiers
             extend Legion::Logging::Helper
 
-            TIERS_CACHE_TTL  = 30 # seconds
             TIERS_CACHE_LOCK = Mutex.new
             @tiers_cache_data = nil
             @tiers_cache_at   = nil
@@ -21,7 +20,7 @@ module Legion
             def self.tiers_tree
               TIERS_CACHE_LOCK.synchronize do
                 now = Time.now.to_i
-                if @tiers_cache_data.nil? || (now - (@tiers_cache_at || 0)) > TIERS_CACHE_TTL
+                if @tiers_cache_data.nil? || (now - (@tiers_cache_at || 0)) > Legion::LLM::Settings.resolve(:api, :tiers_cache_ttl)
                   @tiers_cache_data = Legion::LLM::API::Native::Tiers.build_tiers_tree
                   @tiers_cache_at   = now
                   log.debug('[llm][api][namespaces][tiers] action=cache_rebuilt')

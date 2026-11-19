@@ -255,4 +255,11 @@ RSpec.describe Legion::LLM::Inference::Steps::PromptCache do
       expect(usage.output_tokens).to      eq(50)
     end
   end
+  it 'inherits registered enablement with partial settings and applies the configured threshold' do
+    Legion::Settings[:llm][:prompt_caching] = { min_tokens: 2 }
+    blocks = [{ type: :text, content: 'long enough' }]
+    expect(mod.apply_cache_control(blocks).last[:cache_control]).to eq(type: 'ephemeral')
+    Legion::Settings[:llm][:prompt_caching][:enabled] = false
+    expect(mod.apply_cache_control(blocks)).to eq(blocks)
+  end
 end

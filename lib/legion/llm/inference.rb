@@ -808,11 +808,7 @@ module Legion
       end
 
       def escalation_quality_threshold
-        routing = Legion::Settings[:llm][:routing]
-        return 50 unless routing.is_a?(Hash)
-
-        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
-        esc[:quality_threshold] || 50
+        Legion::LLM::Settings.resolve(:routing, :escalation, :quality_threshold)
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil, messages: nil)

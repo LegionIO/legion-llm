@@ -30,8 +30,6 @@ module Legion
             DEFAULT_SCORES = MODERATION_CATEGORIES.to_h { |cat| [cat.to_sym, 0.0001] }.freeze
             DEFAULT_FLAGS  = MODERATION_CATEGORIES.to_h { |cat| [cat.to_sym, false] }.freeze
 
-            MAX_MODERATION_INPUTS = 32
-
             def self.registered(app)
               log.debug('[llm][api][namespaces][openai][moderations] registering routes')
 
@@ -58,8 +56,9 @@ module Legion
 
                 inputs = raw_input.is_a?(Array) ? raw_input : [raw_input.to_s]
 
-                if inputs.size > MAX_MODERATION_INPUTS
-                  return openai_error("input array exceeds maximum size of #{MAX_MODERATION_INPUTS}",
+                max_inputs = Legion::LLM::Settings.resolve(:moderation, :max_inputs)
+                if inputs.size > max_inputs
+                  return openai_error("input array exceeds maximum size of #{max_inputs}",
                                       type: 'invalid_request_error', code: 'too_many_inputs', status_code: 400)
                 end
 
@@ -114,7 +113,7 @@ module Legion
                 system:   build_moderation_prompt,
                 messages: [{ role: 'user', content: "<content_to_evaluate>#{text}</content_to_evaluate>" }],
                 routing:  { model: model },
-                tokens:   { max: 512 },
+                tokens:   { max: Legion::LLM::Settings.resolve(:moderation, :max_output_tokens) },
                 caller:   caller,
                 stream:   false,
                 cache:    { strategy: :default, cacheable: true }

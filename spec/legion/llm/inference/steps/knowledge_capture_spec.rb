@@ -175,4 +175,21 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       expect { step.step_knowledge_capture }.not_to raise_error
     end
   end
+  describe 'registered capture policy' do
+    it 'does not dispatch capture when enablement keys are missing' do
+      Legion::Settings[:llm][:knowledge_capture] = {}
+      step = klass.new(request)
+      expect(step).not_to receive(:current_response)
+      step.step_knowledge_capture
+    end
+
+    it 'clips stored content and uses configured confidence at the ingest boundary' do
+      local = Module.new
+      stub_const('Legion::Apollo::Local', local)
+      Legion::Settings[:llm][:knowledge_capture].merge!(max_content_chars: 4, confidence: 0.95)
+      expect(local).to receive(:ingest).with(hash_including(content: 'abcd', confidence: 0.95))
+      klass.new(request).send(:ingest_to_local,
+                              response: double(message: { content: 'abcdefgh' }, routing: { model: 'test' }))
+    end
+  end
 end

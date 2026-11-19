@@ -8,8 +8,6 @@ module Legion
       module ShadowEval
         extend Legion::Logging::Helper
 
-        MAX_HISTORY = 100
-
         class << self
           def enabled?
             shadow_setting(:enabled) == true
@@ -18,7 +16,7 @@ module Legion
           def should_sample?
             return false unless enabled?
 
-            rate = shadow_setting(:sample_rate, 0.1)
+            rate = shadow_setting(:sample_rate)
             rand < rate
           end
 
@@ -99,9 +97,8 @@ module Legion
 
           private
 
-          def shadow_setting(key, default = nil)
-            value = Legion::Settings.dig(:llm, :shadow, key)
-            value.nil? ? default : value
+          def shadow_setting(key)
+            Legion::LLM::Settings.resolve(:shadow, key)
           end
 
           # Normalize a canonical pipeline Inference::Response (or hash / provider
@@ -130,8 +127,9 @@ module Legion
           end
 
           def record(comparison)
+            limit = shadow_setting(:max_history)
             history << comparison
-            history.shift while history.size > MAX_HISTORY
+            history.shift([history.size - limit, 0].max)
           end
 
           def estimate_cost(model, usage)

@@ -233,4 +233,10 @@ RSpec.describe Legion::LLM::Scheduling do
       expect(described_class.status[:peak_hours]).to be false
     end
   end
+  it 'uses the registered deferred intents when a partial configuration omits them' do
+    Legion::Settings[:llm][:scheduling] = { enabled: true }
+    allow(Time).to receive(:now).and_return(Time.utc(2026, 3, 21, 16))
+    expect(described_class.should_defer?(intent: :background)).to be true
+    expect(described_class.should_defer?(intent: :maintenance)).to be false
+  end
 end

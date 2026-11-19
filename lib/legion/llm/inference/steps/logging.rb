@@ -64,7 +64,7 @@ module Legion
             when Hash
               "keys=#{value.keys.size}"
             else
-              value.to_s.gsub(/\s+/, ' ')[0, 200]
+              value.to_s.gsub(/\s+/, ' ')[0, Legion::LLM::Settings.resolve(:logging, :pipeline_preview_chars)]
             end
           end
         end

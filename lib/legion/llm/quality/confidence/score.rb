@@ -34,10 +34,10 @@ module Legion
             private
 
             def classify(score, bands)
-              return :very_low  if score < bands.fetch(:low,       0.3)
-              return :low       if score < bands.fetch(:medium,    0.5)
-              return :medium    if score < bands.fetch(:high,      0.7)
-              return :high      if score < bands.fetch(:very_high, 0.9)
+              return :very_low  if score < bands.fetch(:low) { Legion::LLM::Settings.resolve(:confidence, :bands, :low) }
+              return :low       if score < bands.fetch(:medium) { Legion::LLM::Settings.resolve(:confidence, :bands, :medium) }
+              return :medium    if score < bands.fetch(:high) { Legion::LLM::Settings.resolve(:confidence, :bands, :high) }
+              return :high      if score < bands.fetch(:very_high) { Legion::LLM::Settings.resolve(:confidence, :bands, :very_high) }
 
               :very_high
             end

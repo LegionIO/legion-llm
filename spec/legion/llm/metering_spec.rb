@@ -15,8 +15,7 @@ RSpec.describe Legion::LLM::Metering do
   let(:tmp_spool_file) { File.join(tmp_spool_dir, 'events.jsonl') }
 
   before do
-    stub_const('Legion::LLM::Metering::SPOOL_DIR', tmp_spool_dir)
-    stub_const('Legion::LLM::Metering::SPOOL_FILE', tmp_spool_file)
+    Legion::Settings[:llm][:metering][:spool][:path] = tmp_spool_file
   end
 
   after do
@@ -202,5 +201,13 @@ RSpec.describe Legion::LLM::Metering do
       expect(described_class.extract_provider(response)).to eq('anthropic')
       expect(described_class.extract_model(response)).to eq('claude-sonnet-4-6')
     end
+  end
+  it 'preserves the spool when the configured flush delay is invalid' do
+    File.write(tmp_spool_file, "retained ledger data\n")
+    Legion::Settings[:llm][:metering][:spool][:flush_batch_sleep] = -1
+    allow(described_class).to receive(:transport_connected?).and_return(true)
+    allow(described_class).to receive(:metering_event_class).and_return(double)
+    expect(described_class.flush_spool).to eq(0)
+    expect(File.read(tmp_spool_file)).to eq("retained ledger data\n")
   end
 end

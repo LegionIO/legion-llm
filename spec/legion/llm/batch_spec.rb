@@ -245,4 +245,10 @@ RSpec.describe Legion::LLM::Scheduling::Batch do
       expect(described_class.queue_size).to eq(0)
     end
   end
+  it 'uses configured flush size and window without per-call overrides' do
+    Legion::Settings[:llm][:batch].merge!(max_batch_size: 1, window_seconds: 0)
+    2.times { described_class.enqueue(message: 'hello') }
+    expect(described_class.flush.size).to eq(1)
+    expect(described_class.queue_size).to eq(1)
+  end
 end
