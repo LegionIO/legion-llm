@@ -526,7 +526,10 @@ RSpec.describe Legion::LLM::Context::Curator do
       ingested = []
       apollo_local = Module.new do
         define_singleton_method(:started?) { true }
-        define_singleton_method(:ingest) { |**payload| ingested << payload }
+        define_singleton_method(:ingest) do |**payload|
+          ingested << payload
+          { success: true, mode: :local, id: 42 }
+        end
       end
       stub_const('Legion::Apollo::Local', apollo_local)
       Legion::Settings[:llm][:context_curation] = Legion::Settings[:llm][:context_curation].merge(

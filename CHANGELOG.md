@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.33] - 2026-11-19
+
+### Fixed
+- Retain complete conversation history when Apollo archival fails or returns a malformed, unknown, or async-only acknowledgment. Accept confirmed local/direct persistence and existing-content deduplication; mixed facade results must contain a confirmed persisted child. Apply the same check to all archive paths and log unconfirmed outcomes without archive content. Add real SQLite failure/persistence coverage and all three client formats in synchronous and streaming execution. Fixes #192.
+
 ## [0.16.32] - 2026-11-19
 
 ### Fixed
