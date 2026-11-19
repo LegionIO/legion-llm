@@ -179,7 +179,7 @@ RSpec.describe Legion::LLM::Context::Compressor do
     end
 
     it 'uses an explicitly configured compressor model when provided' do
-      Legion::Settings[:llm][:compressor] = { model: 'ollama:llama3.1:8b' }
+      Legion::Settings[:llm][:compressor].merge!(model: 'ollama:llama3.1:8b')
       fake_response = double('Response', content: 'Configured model summary')
 
       expect(Legion::LLM).to receive(:chat_direct)

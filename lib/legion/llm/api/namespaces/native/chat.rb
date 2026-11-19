@@ -14,17 +14,30 @@ module Legion
           module Chat
             extend Legion::Logging::Helper
 
-            ASYNC_POOL = Concurrent::FixedThreadPool.new(
-              [4, (Concurrent.processor_count / 2)].max,
-              fallback_policy: :caller_runs
-            )
+            @pool_mutex = Mutex.new
 
-            # Ensure the thread pool is shut down cleanly when the process exits.
-            # CRITICAL: Without this, Ruby will leak ASYNC_POOL threads on shutdown.
-            at_exit do
-              ASYNC_POOL.shutdown
-              ASYNC_POOL.wait_for_termination(5)
+            def self.async_pool
+              @pool_mutex.synchronize do
+                @async_pool ||= Concurrent::FixedThreadPool.new(
+                  Legion::Settings[:llm][:api][:native_chat_pool_size],
+                  fallback_policy: :caller_runs
+                )
+              end
             end
+
+            def self.shutdown_pool
+              pool = @pool_mutex.synchronize do
+                current = @async_pool
+                @async_pool = nil
+                current
+              end
+              return unless pool
+
+              pool.shutdown
+              pool.wait_for_termination(Legion::Settings[:llm][:api][:native_chat_shutdown_timeout])
+            end
+
+            at_exit { shutdown_pool }
 
             def self.registered(ns_context)
               log.debug('[llm][api][namespaces][chat] registering routes')
@@ -55,7 +68,7 @@ module Legion
                   rc  = Legion::LLM::Cache::Response
 
                   begin
-                    ASYNC_POOL.post do
+                    Legion::LLM::API::Namespaces::Native::Chat.async_pool.post do
                       session  = llm.chat_direct(model: model, provider: provider)
                       response = session.ask(message)
                       rc.complete(

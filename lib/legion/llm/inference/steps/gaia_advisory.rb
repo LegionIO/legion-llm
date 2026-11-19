@@ -91,7 +91,7 @@ module Legion
             entries = ::Legion::Apollo::Local.query(
               text:  identity,
               tags:  ['partner'],
-              limit: 5
+              limit: Legion::Settings[:llm][:gaia][:partner_context_limit]
             )
 
             results = entries.is_a?(Hash) ? (entries[:results] || []) : Array(entries)

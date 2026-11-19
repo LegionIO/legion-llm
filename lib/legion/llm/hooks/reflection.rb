@@ -17,10 +17,6 @@ module Legion
       module Reflection
         extend Legion::Logging::Helper
 
-        MIN_RESPONSE_LENGTH = 200
-        MAX_EXTRACT_LENGTH  = 500
-        COOLDOWN_SECONDS    = 300 # 5 minutes between extractions
-
         @last_extraction = nil
         @extractions = []
         @mutex = Mutex.new
@@ -37,7 +33,7 @@ module Legion
         def extract_async(response, messages, model)
           return unless should_extract?(response)
 
-          Inference::Executor::ASYNC_THREAD_POOL.post do
+          Legion::LLM::Inference::Background.post(workload: :reflection) do
             extract(response, messages, model)
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.hooks.reflection.extract_async', model: model)
@@ -47,10 +43,10 @@ module Legion
 
         def extract(response, messages, model)
           content = extract_content(response)
-          return if content.nil? || content.length < MIN_RESPONSE_LENGTH
+          return if content.nil? || content.length < Legion::Settings[:llm][:reflection][:min_response_chars]
 
           @mutex.synchronize do
-            return if @last_extraction && (Time.now - @last_extraction) < COOLDOWN_SECONDS
+            return if @last_extraction && (Time.now - @last_extraction) < Legion::Settings[:llm][:reflection][:cooldown_seconds]
 
             @last_extraction = Time.now
           end
@@ -87,17 +83,17 @@ module Legion
           decision_markers.each do |pattern|
             content.scan(pattern) do |match|
               text = match[0].strip
-              text = truncate(text, MAX_EXTRACT_LENGTH)
+              text = truncate(text, Legion::Settings[:llm][:reflection][:max_extract_chars])
               entries << {
                 type:         :decision,
                 content:      text,
-                confidence:   0.7,
+                confidence:   Legion::Settings[:llm][:reflection][:confidence][:decision],
                 source:       'reflection',
                 extracted_at: Time.now.iso8601
               }
             end
           end
-          entries.first(2)
+          entries.first(Legion::Settings[:llm][:reflection][:max_entries][:decision])
         end
 
         def extract_patterns(content)
@@ -110,17 +106,17 @@ module Legion
           pattern_markers.each do |pattern|
             content.scan(pattern) do |match|
               text = match[0].strip
-              text = truncate(text, MAX_EXTRACT_LENGTH)
+              text = truncate(text, Legion::Settings[:llm][:reflection][:max_extract_chars])
               entries << {
                 type:         :pattern,
                 content:      text,
-                confidence:   0.6,
+                confidence:   Legion::Settings[:llm][:reflection][:confidence][:pattern],
                 source:       'reflection',
                 extracted_at: Time.now.iso8601
               }
             end
           end
-          entries.first(2)
+          entries.first(Legion::Settings[:llm][:reflection][:max_entries][:pattern])
         end
 
         def extract_facts(content)
@@ -134,17 +130,17 @@ module Legion
           fact_markers.each do |pattern|
             content.scan(pattern) do |match|
               text = match[0].strip
-              text = truncate(text, MAX_EXTRACT_LENGTH)
+              text = truncate(text, Legion::Settings[:llm][:reflection][:max_extract_chars])
               entries << {
                 type:         :fact,
                 content:      text,
-                confidence:   0.65,
+                confidence:   Legion::Settings[:llm][:reflection][:confidence][:fact],
                 source:       'reflection',
                 extracted_at: Time.now.iso8601
               }
             end
           end
-          entries.first(3)
+          entries.first(Legion::Settings[:llm][:reflection][:max_entries][:fact])
         end
 
         def conversation_context(messages)
@@ -154,7 +150,7 @@ module Legion
           return nil if user_messages.empty?
 
           first = user_messages.first[:content].to_s
-          truncate(first, 200)
+          truncate(first, Legion::Settings[:llm][:reflection][:context_chars])
         end
 
         def publish_entry(entry, model)
@@ -193,7 +189,7 @@ module Legion
 
         def should_extract?(response)
           content = extract_content(response)
-          !content.nil? && content.length >= MIN_RESPONSE_LENGTH
+          !content.nil? && content.length >= Legion::Settings[:llm][:reflection][:min_response_chars]
         end
 
         def extract_content(response)
@@ -210,7 +206,7 @@ module Legion
               total_extractions: @extractions.size,
               last_extraction:   @last_extraction&.iso8601,
               by_type:           @extractions.group_by { |e| e[:type] }.transform_values(&:size),
-              recent:            @extractions.last(5).map { |e| { type: e[:type], content: truncate(e[:content], 80) } }
+              recent:            @extractions.last(Legion::Settings[:llm][:reflection][:recent_entries]).map { |e| { type: e[:type], content: truncate(e[:content], Legion::Settings[:llm][:reflection][:recent_preview_chars]) } }
             }
           end
         end

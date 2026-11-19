@@ -127,7 +127,7 @@ RSpec.describe Legion::LLM::Inference::Conversation do
 
   describe 'LRU eviction' do
     it 'evicts oldest conversation when capacity exceeded' do
-      stub_const('Legion::LLM::Inference::Conversation::MAX_CONVERSATIONS', 2)
+      Legion::Settings[:llm][:conversation][:max_conversations] = 2
       described_class.append('conv_a', role: :user, content: 'a')
       described_class.append('conv_b', role: :user, content: 'b')
       described_class.append('conv_c', role: :user, content: 'c')
@@ -137,7 +137,7 @@ RSpec.describe Legion::LLM::Inference::Conversation do
     end
 
     it 'promotes accessed conversation to most-recent' do
-      stub_const('Legion::LLM::Inference::Conversation::MAX_CONVERSATIONS', 2)
+      Legion::Settings[:llm][:conversation][:max_conversations] = 2
       described_class.append('conv_a', role: :user, content: 'a')
       described_class.append('conv_b', role: :user, content: 'b')
       described_class.messages('conv_a') # access promotes conv_a
@@ -146,5 +146,19 @@ RSpec.describe Legion::LLM::Inference::Conversation do
       expect(described_class.in_memory?('conv_a')).to be true
       expect(described_class.in_memory?('conv_b')).to be false
     end
+  end
+  it 'uses the configured metadata search tail and honors explicit overrides' do
+    Legion::Settings[:llm][:conversation][:metadata_tail_messages] = 1
+    described_class.store_metadata('metadata-settings', title: 'A title')
+    described_class.append('metadata-settings', role: :user, content: 'new message')
+    expect(described_class.read_metadata('metadata-settings')).to be_nil
+    expect(described_class.read_metadata('metadata-settings', tail_n: 2)).to include(title: 'A title')
+  end
+
+  it 'enforces a reduced conversation capacity on the next insertion' do
+    4.times { |i| described_class.append("capacity-#{i}", role: :user, content: 'hello') }
+    Legion::Settings[:llm][:conversation][:max_conversations] = 2
+    described_class.append('capacity-4', role: :user, content: 'hello')
+    expect((0..4).count { |i| described_class.conversation_exists?("capacity-#{i}") }).to eq(2)
   end
 end

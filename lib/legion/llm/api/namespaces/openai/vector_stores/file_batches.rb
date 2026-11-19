@@ -18,8 +18,6 @@ module Legion
               extend Sinatra::Extension
               extend Legion::Logging::Helper
 
-              SYNC_BATCH_LIMIT = 20
-
               # POST /v1/vector_stores/:vector_store_id/file_batches — create batch
               post '/file_batches' do
                 require_llm!
@@ -41,7 +39,14 @@ module Legion
                                       type: 'invalid_request_error', code: 'not_found', status_code: 404)
                 end
 
-                file_ids      = body[:file_ids].map(&:to_s).uniq.first(SYNC_BATCH_LIMIT)
+                file_ids = body[:file_ids].map(&:to_s).uniq
+                limit = Legion::Settings[:llm][:vector_store][:batch_max_files]
+                raise ArgumentError, 'llm.vector_store.batch_max_files must be a positive Integer' unless limit.is_a?(Integer) && limit.positive?
+                if file_ids.size > limit
+                  return openai_error("file_ids exceeds the configured maximum of #{limit} unique files",
+                                      type: 'invalid_request_error', code: 'file_batch_limit_exceeded', status_code: 400)
+                end
+
                 batch_id      = Legion::LLM::VectorStore::Storage.generate_id('vsfb')
                 ts            = Legion::LLM::VectorStore::Storage.now_ts
                 initial_counts = {

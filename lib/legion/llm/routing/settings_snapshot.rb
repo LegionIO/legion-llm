@@ -116,36 +116,36 @@ module Legion
           @context_headroom_ppm            = resolve_context_headroom_ppm!(router)
           @input_framing_overhead_tokens   = validate_nonneg_integer!(
             :input_framing_overhead_tokens,
-            router.fetch(:input_framing_overhead_tokens, 1_024)
+            router[:input_framing_overhead_tokens]
           )
           @affinity_strength_bps = validate_affinity_strength_bps!(
-            router.fetch(:affinity_strength_bps, 10_000)
+            router[:affinity_strength_bps]
           )
           @maximum_attempts = validate_positive_integer!(
             :maximum_attempts,
-            router.fetch(:max_attempts, 3)
+            router[:max_attempts]
           )
           @routing_too_early_retry_after = validate_retry_after!(
-            api.fetch(:routing_too_early_retry_after, 1)
+            api[:routing_too_early_retry_after]
           )
           @allow_body_routing_hints = validate_boolean!(
             :allow_body_routing_hints,
-            router.fetch(:allow_body_routing_hints, false)
+            router[:allow_body_routing_hints]
           )
           @body_model_hint_whitelist = validate_string_list!(
             :body_model_hint_whitelist,
-            router.fetch(:body_model_hint_whitelist, [])
+            router[:body_model_hint_whitelist]
           )
           @body_model_hint_blacklist = validate_string_list!(
             :body_model_hint_blacklist,
-            router.fetch(:body_model_hint_blacklist, [])
+            router[:body_model_hint_blacklist]
           )
           @auto_routing_model_aliases = validate_string_list!(
             :auto_routing_model_aliases,
-            router.fetch(:auto_routing_model_aliases, [])
+            router[:auto_routing_model_aliases]
           )
           @auto_routing_model_alias_metadata = validate_alias_metadata!(
-            router.fetch(:auto_routing_model_alias_metadata, {}),
+            router[:auto_routing_model_alias_metadata],
             @auto_routing_model_aliases
           )
         end
@@ -229,7 +229,7 @@ module Legion
             return ppm
           end
 
-          validate_context_headroom_ppm!(router.fetch(:context_headroom_ppm, 900_000))
+          validate_context_headroom_ppm!(router[:context_headroom_ppm])
         end
 
         def validate_context_headroom_ppm!(raw)

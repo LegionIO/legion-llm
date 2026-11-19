@@ -256,7 +256,7 @@ module Legion
           {
             mandatory:                  dispatch[:mandatory],
             publisher_confirm:          dispatch[:publisher_confirm],
-            publish_confirm_timeout_ms: dispatch[:publish_confirm_timeout_ms] || 500,
+            publish_confirm_timeout_ms: Legion::Settings[:llm][:fleet][:dispatch][:publish_confirm_timeout_ms],
             spool:                      dispatch[:spool],
             return_result:              true
           }

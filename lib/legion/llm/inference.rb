@@ -600,7 +600,7 @@ module Legion
         return unless Quality::ShadowEval.enabled? && Quality::ShadowEval.should_sample?
 
         log.debug "[llm][inference] shadow_evaluate primary_model=#{primary_model}"
-        Inference::Executor::ASYNC_THREAD_POOL.post do
+        Legion::LLM::Inference::Background.post(workload: :shadow_evaluation) do
           Quality::ShadowEval.evaluate(
             primary_response: { content: response.respond_to?(:content) ? response.content : response.to_s,
                                 model: primary_model, usage: {} },
@@ -805,14 +805,6 @@ module Legion
 
         esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
         esc[:enabled] == true
-      end
-
-      def escalation_quality_threshold
-        routing = Legion::Settings[:llm][:routing]
-        return 50 unless routing.is_a?(Hash)
-
-        esc = routing.is_a?(Hash) ? (routing[:escalation] || {}) : {}
-        esc[:quality_threshold] || 50
       end
 
       def emit_non_pipeline_metering(response, model:, provider:, caller: nil, messages: nil)

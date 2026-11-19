@@ -87,13 +87,14 @@ RSpec.describe Legion::LLM::Quality::ShadowEval do
       expect(described_class.history.size).to eq(1)
     end
 
-    it 'caps at MAX_HISTORY' do
+    it 'caps history at the configured limit' do
+      Legion::Settings[:llm][:shadow][:max_history] = 3
       primary = { content: 'x', model: 'm', usage: 0 }
       shadow = { content: 'y', model: 's', usage: 0 }
-      (described_class::MAX_HISTORY + 5).times do
+      (Legion::Settings[:llm][:shadow][:max_history] + 5).times do
         described_class.send(:record, described_class.compare(primary, shadow, 's'))
       end
-      expect(described_class.history.size).to eq(described_class::MAX_HISTORY)
+      expect(described_class.history.size).to eq(Legion::Settings[:llm][:shadow][:max_history])
     end
   end
 
@@ -129,5 +130,10 @@ RSpec.describe Legion::LLM::Quality::ShadowEval do
       described_class.clear_history
       expect(described_class.history).to be_empty
     end
+  end
+  it 'does not retain a comparison when the configured cap is invalid' do
+    Legion::Settings[:llm][:shadow][:max_history] = -1
+    expect { described_class.send(:record, { content: 'retained?' }) }.to raise_error(ArgumentError, /max_history/)
+    expect(described_class.history).to be_empty
   end
 end

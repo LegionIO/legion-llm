@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'concurrent'
 require 'legion/llm/settings/tools'
 require 'legion/llm/settings/api'
 require 'legion/llm/settings/router'
@@ -17,9 +18,10 @@ module Legion
           enabled:                   true,
           connected:                 false,
           pipeline_enabled:          true,
+          background:                background_defaults,
           pipeline_async_post_steps: true,
           context_window:            250_000,
-          max_output_tokens:         16_384,
+          max_output_tokens:         64_000,
           default_model:             model_override,
           default_temperature:       0.9,
           default_provider:          nil,
@@ -42,28 +44,153 @@ module Legion
           gaia:                      gaia_defaults,
           knowledge_capture:         knowledge_capture_defaults,
           embedding:                 embedding_defaults,
+          vector_store:              vector_store_defaults,
           conversation:              conversation_defaults,
           telemetry:                 telemetry_defaults,
-          pricing:                   {},
+          pricing:                   pricing_defaults,
           metering:                  metering_defaults,
           context_curation:          context_curation_defaults,
           debate:                    debate_defaults,
           provider_layer:            provider_layer_defaults,
-          tools:                     Legion::LLM::Settings::Tools.defaults,
-          api:                       Legion::LLM::Settings::API.defaults,
+          tools:                     Legion::LLM::Settings::Tools.defaults.merge(native: native_tool_defaults),
+          api:                       Legion::LLM::Settings::API.defaults.merge(api_runtime_defaults),
           streaming:                 streaming_defaults,
           compliance:                compliance_defaults,
           logging:                   logging_defaults,
           skills:                    skills_defaults,
           claude_cli:                claude_cli_defaults,
           fallback:                  fallback_defaults,
-          structured_output:         structured_output_defaults
+          structured_output:         structured_output_defaults,
+          compressor:                compressor_defaults,
+          quality:                   quality_defaults,
+          reflection:                reflection_defaults,
+          shadow:                    shadow_defaults,
+          files:                     files_defaults,
+          moderation:                moderation_defaults
         }
+      end
+
+      RUNTIME_CONSTRAINTS = {
+        positive_integer:    %w[
+          moderation.max_inputs moderation.max_output_tokens
+          api.native_chat_pool_size background.workers background.max_queue
+          embedding.chunk_target_tokens vector_store.max_scan_chunks vector_store.chunk_target_chars
+          conversation.max_conversations conversation.metadata_tail_messages
+          compressor.summary_token_threshold compressor.summary_input_chars_per_token compressor.dedup_window
+          quality.repetition_min_chars quality.repetition_count
+          context_curation.exchange_window context_curation.tool_result_max_chars context_curation.target_context_tokens
+          metering.spool.max_events
+          files.max_part_size_bytes files.max_total_upload_bytes
+        ],
+        nonnegative_integer: %w[
+          metering.token_history_limit shadow.max_history
+          compressor.dedup_min_chars quality.threshold quality.truncation_min_chars
+          context_curation.preserve_recent_turns context_curation.conclusion_max_chars
+          context_curation.file_preview_chars context_curation.command_tail_lines context_curation.command_preview_chars
+          context_curation.tool_preview_chars context_curation.exit_status_scan_chars context_curation.file_path_scan_chars
+          context_curation.distillation_input_chars context_curation.short_conclusion_chars
+          context_curation.debug_content_max_chars
+          knowledge_capture.max_content_chars
+          reflection.min_response_chars reflection.max_extract_chars reflection.context_chars
+          reflection.recent_entries reflection.recent_preview_chars
+          reflection.max_entries.decision reflection.max_entries.pattern reflection.max_entries.fact
+          logging.tool_name_limit logging.pipeline_preview_chars logging.anthropic_preview_chars
+          logging.dispatch_preview_chars logging.dispatch_error_chars logging.escalation_preview_chars
+          compliance.tool_audit_result_max_chars
+          tools.native.grep_max_lines tools.native.glob_max_matches tools.native.web_search_results
+          gaia.partner_context_limit debate.summary_max_chars
+        ],
+        positive_number:     %w[
+          daemon.health_open_timeout daemon.health_read_timeout daemon.open_timeout daemon.read_timeout daemon.inference_timeout
+          prompt_caching.response_cache.poll_interval_seconds embedding.cache.ttl
+        ],
+        nonnegative_number:  %w[
+          daemon.health_cache_ttl api.native_chat_shutdown_timeout api.tiers_cache_ttl background.shutdown_timeout
+          reflection.cooldown_seconds metering.spool.flush_batch_sleep
+          prompt_caching.response_cache.ttl_seconds fleet.dispatch.publish_confirm_timeout_ms
+          confidence.hedge_penalty confidence.max_hedge_penalty confidence.structured_output_bonus
+        ],
+        fraction:            %w[
+          embedding.chunk_boundary_ratio context_curation.dedup_threshold
+          shadow.sample_rate knowledge_capture.confidence
+          reflection.confidence.decision reflection.confidence.pattern reflection.confidence.fact
+          debate.judge_confidence.uncertain debate.judge_confidence.decisive debate.judge_confidence.default
+          confidence.bands.low confidence.bands.medium confidence.bands.high confidence.bands.very_high
+        ],
+        positive_fraction:   %w[compressor.summary_budget_ratio],
+        finite_number:       %w[
+          confidence.min_logprob confidence.heuristic_weights.refusal confidence.heuristic_weights.empty
+          confidence.heuristic_weights.truncated confidence.heuristic_weights.repetition
+          confidence.heuristic_weights.json_parse_failure confidence.heuristic_weights.too_short
+        ],
+        boolean:             %w[
+          knowledge_capture.enabled knowledge_capture.writeback_enabled knowledge_capture.local_ingest_enabled
+          rag_guard.block_on_failure skills.auto_discover.claude skills.auto_discover.codex
+          quality.too_short quality.repetition quality.truncated quality.refusal quality.hedging shadow.enabled
+          prompt_caching.enabled prompt_caching.cache_system_prompt prompt_caching.cache_conversation prompt_caching.sort_tools
+        ],
+        nonempty_string:     %w[
+          files.storage_path metering.spool.path prompt_caching.response_cache.spool_dir
+          skills.discovery_roots.claude_skills skills.discovery_roots.claude_plugins skills.discovery_roots.codex_skills
+          tools.native.grep_include
+        ]
+      }.flat_map { |kind, paths| paths.map { |path| [path, kind] } }.to_h.freeze
+      private_constant :RUNTIME_CONSTRAINTS
+
+      # Framework validation consumes a supplied configuration snapshot. Runtime
+      # consumers read the boot-merged Legion::Settings tree directly.
+      def self.validate_runtime(settings:, errors:, **)
+        RUNTIME_CONSTRAINTS.each do |path, kind|
+          value = path.split('.').reduce(settings) { |node, key| node.is_a?(Hash) ? node[key.to_sym] : nil }
+          next if valid_runtime_value?(kind: kind, value: value)
+
+          errors << { module: :llm, path: path, message: "must be #{kind}" }
+        end
+      end
+
+      def self.valid_runtime_value?(kind:, value:)
+        numeric = value.is_a?(Numeric) && value.real? && value.finite?
+        case kind
+        when :positive_integer then value.is_a?(Integer) && value.positive?
+        when :nonnegative_integer then value.is_a?(Integer) && value >= 0
+        when :positive_number then numeric && value.positive?
+        when :nonnegative_number then numeric && value >= 0
+        when :finite_number then numeric
+        when :positive_fraction then numeric && value.positive? && value <= 1
+        when :fraction then numeric && value.between?(0, 1)
+        when :boolean then [true, false].include?(value)
+        when :nonempty_string then value.is_a?(String) && !value.strip.empty?
+        end
+      end
+      private_class_method :valid_runtime_value?
+
+      def self.runtime_schema
+        RUNTIME_CONSTRAINTS.each_with_object({}) do |(path, kind), schema|
+          keys = path.split('.').map(&:to_sym)
+          leaf = keys.pop
+          node = keys.reduce(schema) { |branch, key| branch[key] ||= {} }
+          type = case kind
+                 when :positive_integer, :nonnegative_integer then :integer
+                 when :boolean then :boolean
+                 when :nonempty_string then :string
+                 else :float
+                 end
+          node[leaf] = { type: type, required: true }
+        end
+      end
+      private_class_method :runtime_schema
+
+      def self.background_defaults
+        { workers: 4, max_queue: 64, shutdown_timeout: 5 }
       end
 
       def self.register_defaults!
         log.debug '[llm][settings] action=register_defaults'
         Legion::Settings.register_library(:llm, default)
+        Legion::Settings.define_schema(:llm, runtime_schema)
+        Legion::Settings.add_cross_validation do |settings, errors|
+          Legion::LLM::Settings.validate_runtime(settings: settings[:llm], errors: errors)
+        end
       end
 
       def self.validate!(settings)
@@ -138,19 +265,30 @@ module Legion
 
       def self.confidence_defaults
         {
-          bands: {
+          bands:                   {
             low:       0.3,
             medium:    0.5,
             high:      0.7,
             very_high: 0.9
-          }
+          },
+          heuristic_weights:       { refusal: -0.8, empty: -1.0, truncated: -0.4, repetition: -0.5, json_parse_failure: -0.6, too_short: -0.3 },
+          structured_output_bonus: 0.1,
+          hedge_penalty:           0.05,
+          max_hedge_penalty:       0.3,
+          min_logprob:             -5.0
         }
       end
 
       def self.daemon_defaults
         {
-          url:     'http://127.0.0.1:4567',
-          enabled: true
+          url:                 'http://127.0.0.1:4567',
+          enabled:             true,
+          health_cache_ttl:    30,
+          health_open_timeout: 2,
+          health_read_timeout: 2,
+          open_timeout:        5,
+          read_timeout:        60,
+          inference_timeout:   120
         }
       end
 
@@ -166,6 +304,7 @@ module Legion
           response_cache:      {
             enabled:               true,
             ttl_seconds:           300,
+            poll_interval_seconds: 0.1,
             spool_dir:             '~/.legionio/data/spool/llm_responses',
             spool_threshold_bytes: 8 * 1024 * 1024
           }
@@ -185,19 +324,20 @@ module Legion
       def self.fleet_defaults
         {
           dispatch:  {
-            enabled:                false,
-            exchange:               'llm.fleet',
-            routing_style:          :shared_lane,
-            mandatory:              true,
-            publisher_confirm:      true,
-            spool:                  false,
-            timeout_seconds:        30,
-            timeouts:               { chat: 30, stream_chat: 30, embed: 10, image: 60, default: 30 },
-            require_auth:           nil,
-            token_ttl_seconds:      180,
-            reply_queue_expires_ms: 60_000,
-            reply_queue_prefix:     'llm.fleet.reply',
-            request_ttl_ms:         120_000
+            enabled:                    false,
+            exchange:                   'llm.fleet',
+            routing_style:              :shared_lane,
+            mandatory:                  true,
+            publisher_confirm:          true,
+            publish_confirm_timeout_ms: 500,
+            spool:                      false,
+            timeout_seconds:            30,
+            timeouts:                   { chat: 30, stream_chat: 30, embed: 10, image: 60, default: 30 },
+            require_auth:               nil,
+            token_ttl_seconds:          180,
+            reply_queue_expires_ms:     60_000,
+            reply_queue_prefix:         'llm.fleet.reply',
+            request_ttl_ms:             120_000
           },
           auth:      {
             require_signed_token:   true,
@@ -353,7 +493,8 @@ module Legion
           # hard pins were a second selection domain (settings pins that
           # bypassed Router.next_lane's hint-miss fallback). Routing choice
           # belongs to the router alone.
-          advisory_enabled: true
+          advisory_enabled:      true,
+          partner_context_limit: 5
         }
       end
 
@@ -361,7 +502,9 @@ module Legion
         {
           enabled:              false,
           writeback_enabled:    false,
-          local_ingest_enabled: false
+          local_ingest_enabled: false,
+          max_content_chars:    2000,
+          confidence:           0.8
         }
       end
 
@@ -375,6 +518,8 @@ module Legion
           # (model/provider/instance constraints), not in a second selection
           # domain.
           dimension:                    1024,
+          chunk_target_tokens:          512,
+          chunk_boundary_ratio:         0.5,
           enforce_dimension:            true,
           ollama_context_chars:         {
             'mxbai-embed-large'      => 1400,
@@ -399,11 +544,36 @@ module Legion
         }
       end
 
+      def self.vector_store_defaults
+        { batch_max_files: 20, max_scan_chunks: 10_000, chunk_target_chars: 512 }
+      end
+
       def self.telemetry_defaults
         {
           pipeline_spans:    true,
           # Tag substitute when default_model is nil during span emission.
           unknown_model_tag: 'unknown'
+        }
+      end
+
+      # Operator-maintained estimates in USD per million tokens. These rates
+      # do not publish model offerings or claim live provider billing prices.
+      def self.pricing_defaults
+        {
+          'claude-opus-4-6'   => { input: 15.0, output: 75.0 },
+          'claude-sonnet-4-6' => { input: 3.0, output: 15.0 },
+          'claude-haiku-4-5'  => { input: 0.80, output: 4.0 },
+          'claude-3-5-sonnet' => { input: 3.0, output: 15.0 },
+          'claude-3-haiku'    => { input: 0.25, output: 1.25 },
+          'gpt-4o'            => { input: 2.50, output: 10.0 },
+          'gpt-4o-mini'       => { input: 0.15, output: 0.60 },
+          'gpt-4-turbo'       => { input: 10.0, output: 30.0 },
+          'o3'                => { input: 10.0, output: 40.0 },
+          'o3-mini'           => { input: 1.10, output: 4.40 },
+          'o4-mini'           => { input: 1.10, output: 4.40 },
+          'gemini-2.5-pro'    => { input: 1.25, output: 10.0 },
+          'gemini-2.5-flash'  => { input: 0.15, output: 0.60 },
+          'gemini-2.0-flash'  => { input: 0.10, output: 0.40 }
         }
       end
 
@@ -414,8 +584,13 @@ module Legion
           # routing, and status — never the request messages, response
           # content, or response thinking. Set :raw to include them;
           # privacy-classified requests are excluded regardless of mode.
-          capture_mode: :metadata_only,
-          spool:        {
+          capture_mode:        :metadata_only,
+          # Explicit estimate for absent/unrecognized model pricing; all cost
+          # consumers share this policy, never a second inline fallback.
+          unknown_model_price: { input: 1.0, output: 3.0 },
+          token_history_limit: 10_000,
+          spool:               {
+            path:              '~/.legionio/data/spool/metering/events.jsonl',
             max_events:        10_000,
             flush_batch_sleep: 0.0
           }
@@ -429,6 +604,18 @@ module Legion
           llm_assisted:             false,
           llm_model:                nil,
           tool_result_max_chars:    10_000,
+          preserve_recent_turns:    2,
+          exchange_window:          4,
+          conclusion_max_chars:     300,
+          short_conclusion_chars:   500,
+          debug_content_max_chars:  50,
+          file_preview_chars:       80,
+          command_tail_lines:       3,
+          command_preview_chars:    200,
+          tool_preview_chars:       200,
+          exit_status_scan_chars:   500,
+          file_path_scan_chars:     500,
+          distillation_input_chars: 4000,
           thinking_eviction:        true,
           exchange_folding:         true,
           superseded_eviction:      true,
@@ -460,10 +647,12 @@ module Legion
 
       def self.conversation_defaults
         {
-          summarize_threshold: 120_000,
-          target_tokens:       90_000,
-          preserve_recent:     10,
-          auto_compact:        true
+          summarize_threshold:    120_000,
+          max_conversations:      256,
+          metadata_tail_messages: 20,
+          target_tokens:          90_000,
+          preserve_recent:        10,
+          auto_compact:           true
         }
       end
 
@@ -486,7 +675,9 @@ module Legion
           advocate_model:           nil,
           challenger_model:         nil,
           judge_model:              nil,
-          model_selection_strategy: 'rotate'
+          model_selection_strategy: 'rotate',
+          judge_confidence:         { uncertain: 0.4, decisive: 0.85, default: 0.65 },
+          summary_max_chars:        200
         }
       end
 
@@ -523,6 +714,7 @@ module Legion
           max_active_skills: 1,
           directories:       ['.legion/skills', '~/.legionio/skills'],
           auto_discover:     { claude: false, codex: false },
+          discovery_roots:   { claude_skills: '~/.claude/skills', claude_plugins: '~/.claude/plugins', codex_skills: '~/.codex/skills' },
           enabled_skills:    [],
           disabled_skills:   []
         }
@@ -549,7 +741,69 @@ module Legion
         # cap the preview at that many characters (truncated, never unbounded);
         # 0 = no payload in the log at all.
         {
-          payload_preview_chars: 0
+          payload_preview_chars:    0,
+          tool_name_limit:          30,
+          pipeline_preview_chars:   200,
+          anthropic_preview_chars:  80,
+          dispatch_preview_chars:   200,
+          dispatch_error_chars:     512,
+          escalation_preview_chars: 200
+        }
+      end
+
+      def self.compressor_defaults
+        {
+          model:                         nil,
+          summary_token_threshold:       2000,
+          summary_input_chars_per_token: 8,
+          summary_budget_ratio:          0.5,
+          dedup_window:                  20,
+          dedup_min_chars:               20
+        }
+      end
+
+      def self.quality_defaults
+        {
+          too_short: false, repetition: false, truncated: false, refusal: false, hedging: false,
+          threshold: 50, repetition_min_chars: 20, repetition_count: 3, truncation_min_chars: 100
+        }
+      end
+
+      def self.reflection_defaults
+        {
+          min_response_chars: 200, max_extract_chars: 500, cooldown_seconds: 300,
+          max_entries: { decision: 2, pattern: 2, fact: 3 },
+          confidence: { decision: 0.7, pattern: 0.6, fact: 0.65 },
+          context_chars: 200, recent_entries: 5, recent_preview_chars: 80
+        }
+      end
+
+      def self.shadow_defaults
+        { enabled: false, model: nil, sample_rate: 0.1, max_history: 100 }
+      end
+
+      def self.files_defaults
+        {
+          storage_path:           '~/.legionio/data/files',
+          # Existing environment overrides remain supported; settings overlays win.
+          max_part_size_bytes:    Integer(ENV.fetch('LEGION_UPLOAD_MAX_PART_MB', '64')) * 1024 * 1024,
+          max_total_upload_bytes: Integer(ENV.fetch('LEGION_UPLOAD_MAX_TOTAL_MB', '512')) * 1024 * 1024
+        }
+      end
+
+      def self.moderation_defaults
+        { max_inputs: 32, max_output_tokens: 512 }
+      end
+
+      def self.native_tool_defaults
+        { grep_include: '*.rb', grep_max_lines: 50, glob_max_matches: 100, web_search_results: 5 }
+      end
+
+      def self.api_runtime_defaults
+        {
+          native_chat_pool_size:        [4, Concurrent.processor_count / 2].max,
+          native_chat_shutdown_timeout: 5,
+          tiers_cache_ttl:              30
         }
       end
 
@@ -566,6 +820,7 @@ module Legion
           standalone_email_pii:        false,
           default_level:               :public,
           audit_max_messages:          20,
+          tool_audit_result_max_chars: 4096,
           # Early compaction of individual image/audio/video data fields. The
           # complete attributed prompt-audit body is also bounded at publish by
           # transport.max_payload_bytes, even when every binary is below this.
@@ -577,9 +832,3 @@ module Legion
 end
 
 Legion::LLM::Settings.register_defaults!
-
-begin
-  Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default) if Legion.const_defined?('Settings', false)
-rescue StandardError => e
-  Legion::LLM::Settings.handle_exception(e, level: :fatal, operation: :merge_settings)
-end

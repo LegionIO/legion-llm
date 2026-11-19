@@ -89,19 +89,24 @@ RSpec.describe 'Namespaces::OpenAI::Uploads::Parts' do
       expect(body[:error][:code]).to eq('upload_not_pending')
     end
 
-    it 'returns 413 when part exceeds MAX_PART_SIZE_BYTES' do
-      max_size = Legion::LLM::API::Namespaces::OpenAI::Uploads::Parts::MAX_PART_SIZE_BYTES
-      # Use ENV-based approach: reassign the constant in test context
-      # Since we can't override constants, verify the constant exists and is reasonable
-      expect(max_size).to be_a(Integer)
-      expect(max_size).to be > 0
+    it 'rejects a part above the configured limit without storing it' do
+      Legion::Settings[:llm][:files][:max_part_size_bytes] = 4
+      post "/v1/uploads/#{upload_id}/parts", '12345', 'CONTENT_TYPE' => 'application/octet-stream'
+      expect(last_response.status).to eq(413)
+      expect(Legion::JSON.load(last_response.body).dig(:error, :code)).to eq('part_too_large')
+      expect(Legion::LLM::API::Namespaces::OpenAI::Uploads::UPLOAD_STORE[upload_id][:parts]).to be_empty
     end
 
-    it 'returns 413 when cumulative upload would exceed MAX_TOTAL_UPLOAD_BYTES' do
-      max_total = Legion::LLM::API::Namespaces::OpenAI::Uploads::Parts::MAX_TOTAL_UPLOAD_BYTES
-      max_part  = Legion::LLM::API::Namespaces::OpenAI::Uploads::Parts::MAX_PART_SIZE_BYTES
-      expect(max_total).to be_a(Integer)
-      expect(max_total).to be > max_part
+    it 'accepts the configured cumulative boundary and rejects the next part' do
+      Legion::Settings[:llm][:files].merge!(max_part_size_bytes: 4, max_total_upload_bytes: 6)
+      post "/v1/uploads/#{upload_id}/parts", '1234', 'CONTENT_TYPE' => 'application/octet-stream'
+      expect(last_response.status).to eq(200)
+      post "/v1/uploads/#{upload_id}/parts", '56', 'CONTENT_TYPE' => 'application/octet-stream'
+      expect(last_response.status).to eq(200)
+      post "/v1/uploads/#{upload_id}/parts", '7', 'CONTENT_TYPE' => 'application/octet-stream'
+      expect(last_response.status).to eq(413)
+      expect(Legion::JSON.load(last_response.body).dig(:error, :code)).to eq('upload_too_large')
+      expect(Legion::LLM::API::Namespaces::OpenAI::Uploads::UPLOAD_STORE[upload_id][:parts].size).to eq(2)
     end
   end
 end

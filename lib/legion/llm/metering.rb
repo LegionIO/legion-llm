@@ -13,8 +13,6 @@ module Legion
     module Metering
       extend Legion::Logging::Helper
 
-      SPOOL_DIR = File.expand_path('~/.legionio/data/spool/metering')
-      SPOOL_FILE = File.join(SPOOL_DIR, 'events.jsonl').freeze
       SPOOL_MUTEX = Mutex.new
 
       def self.load_transport
@@ -60,6 +58,11 @@ module Legion
           return 0
         end
 
+        batch_sleep = Legion::Settings[:llm][:metering][:spool][:flush_batch_sleep]
+        unless batch_sleep.is_a?(Numeric) && batch_sleep.real? && batch_sleep.finite? && batch_sleep >= 0
+          raise ArgumentError, 'llm.metering.spool.flush_batch_sleep must be finite and nonnegative'
+        end
+
         # Read and truncate atomically under the mutex so no events written
         # between read and truncate can be silently lost.
         events = SPOOL_MUTEX.synchronize do
@@ -81,7 +84,6 @@ module Legion
 
         return 0 if events.empty?
 
-        batch_sleep = spool_settings[:flush_batch_sleep] || 0.0
         flushed = 0
 
         events.each_with_index do |event_data, index|
@@ -263,7 +265,7 @@ module Legion
         path = spool_file_path
         return unless File.exist?(path)
 
-        max = spool_settings[:max_events] || 10_000
+        max = Legion::Settings[:llm][:metering][:spool][:max_events]
         lines = File.readlines(path, chomp: true)
         return if lines.size < max
 
@@ -277,17 +279,11 @@ module Legion
         FileUtils.mkdir_p(spool_dir_path)
       end
 
-      def spool_settings
-        settings = Legion::Settings[:llm][:metering][:spool]
-        settings.is_a?(Hash) ? settings : {}
-      end
-
       # Resolve spool file path at call time, honouring operator-configured
       # paths (e.g. for containerised deployments where $HOME is not writable).
-      # Falls back to the compile-time SPOOL_FILE constant.
+      # The default path is registered alongside the other spool settings.
       def spool_file_path
-        configured = spool_settings[:path]
-        configured && !configured.to_s.strip.empty? ? configured.to_s : SPOOL_FILE
+        File.expand_path(Legion::Settings[:llm][:metering][:spool][:path])
       end
 
       def spool_dir_path

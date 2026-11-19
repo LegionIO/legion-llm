@@ -96,6 +96,7 @@ module Legion
     class << self
       def start
         log.debug '[llm] start.enter'
+        Legion::LLM::Inference::Background.start
         Call::Providers.setup
         Config.set_defaults
         Hooks.install_defaults
@@ -121,13 +122,11 @@ module Legion
         log.debug '[llm] shutdown.enter'
         Legion::Settings[:llm][:connected] = false
         @started = false
+        # Accepted jobs may still need provider connections while draining.
+        return false unless Legion::LLM::Inference::Background.shutdown
+
         Call::Registry.disconnect_all!
         Call::Registry.reset!
-        # Gracefully shut down the async thread pool (curation, reflection, knowledge capture)
-        if (pool = Inference::Executor::ASYNC_THREAD_POOL).running?
-          pool.shutdown
-          pool.wait_for_termination(5)
-        end
         log.info '[llm] shut down'
       end
 

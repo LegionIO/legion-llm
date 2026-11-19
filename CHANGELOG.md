@@ -1,5 +1,61 @@
 # Legion LLM Changelog
 
+## [0.16.30] - 2026-11-19
+
+### Fixed
+- Correct the 64k default `llm.max_output_tokens` allowance to 64,000 tokens instead of 65,536, avoiding default-budget rejection on Bedrock models with a 64,000-token output ceiling. Preserve explicit client limits and operator overrides. Cover the registered default through synchronous and streaming client routing, canonical dispatch, and provider rendering. Refs #225.
+
+## [0.16.29] - 2026-11-19
+
+### Changed
+- Raise the default `llm.max_output_tokens` allowance from 16,384 to 65,536 tokens. Explicit client limits and operator-configured defaults retain precedence. Refs #225.
+
+## [0.16.28] - 2026-11-19
+
+### Fixed
+- Remove the custom settings resolver and read wrappers introduced during #229 cleanup. Core consumers read the boot-merged `Legion::Settings[:llm]` tree directly; routing continues to use its immutable request snapshot. Register type and range validation through the settings framework, preserving explicit false, zero and nil values instead of silently replacing invalid configuration. Fixes #229.
+- Preserve queued tool audits and metering data when resource limits are invalid. Keep mutable executor locks in runtime state, propagate programming errors, and report background admission exceptions at WARN.
+- Exercise the real settings reset, default registration and validation lifecycle in RSpec instead of overriding the dependency's reset method. Correct partial-configuration fixtures without weakening behavior assertions, and drain asynchronous capture/curation before assertions and fixture teardown.
+
+## [0.16.27] - 2026-11-19
+
+### Fixed
+- Bound the shared inference executor through validated `llm.background.workers`, `max_queue` and `shutdown_timeout` settings (defaults: 4 workers, 64 queued jobs, 5 seconds). Saturation explicitly logs and rejects optional capture, reflection and shadow work without executing it on the submitting thread. Fixes #222 and #191, which track the same unbounded pool.
+- Coalesce curation by conversation, retaining only the latest pending job per admitted conversation. Rejected curation retains raw history for future use. Expose queue length, capacity, keyed jobs and rejection/coalescing counts through `Inference::Background.stats`.
+- Keep prompt audit and metering outside optional-work admission, avoid nested capture submission, and drain accepted jobs before disconnecting providers on shutdown. A timed-out drain is logged and keeps accepted work alive; restart waits for the previous pool to terminate.
+
+## [0.16.26] - 2026-11-19
+
+### Fixed
+- Make registered settings the owner of runtime timeouts, curation/compression budgets, storage paths, cache timing, retention caps, quality/reflection policy, moderation/upload limits, native helper limits, diagnostic clipping and shadow sampling. Remove duplicate inline defaults while preserving request-owned routing snapshots and explicit overrides. Fixes #229.
+- Missing knowledge-capture, RAG-blocking and external skill-discovery flags now inherit their disabled registered defaults. Partial curation settings inherit the registered 120,000-token context target and 10,000-character tool-result threshold; prompt caching inherits its registered enabled default. Embedding cache TTL inherits its own 86,400-second policy, not the generic cache TTL.
+- Validate newly configurable resource bounds, preserve valid zero values, and reject malformed settings. Resolve native chat pool size on first use; both file dialects, uploads and batch output share `llm.files.storage_path`. Existing upload environment overrides remain supported by the settings defaults. See the runtime settings reference for units and reload behavior.
+
+## [0.16.25] - 2026-11-19
+
+### Fixed
+- Centralize estimated model rates in `llm.pricing` and the unknown-model policy in `llm.metering.unknown_model_price`. Estimation, recording and shadow evaluation now honor the same overrides and resolver. Unknown-model recording now shares the estimator's configurable 1/3 USD-per-million input/output defaults instead of a separate 5/15 fallback. Fixes #228.
+
+## [0.16.24] - 2026-11-19
+
+### Fixed
+- Reject vector-store file batches exceeding `llm.vector_store.batch_max_files` before creating or processing a batch, instead of silently dropping files after the first 20 unique IDs. Accepted batches retain every unique ID and accurate counts. Fixes #227.
+
+## [0.16.23] - 2026-11-19
+
+### Fixed
+- Enforce the final dispatch context budget using the request's validated `router.context_headroom_ppm` snapshot instead of a fixed 90% threshold, retaining payload accounting and overflow handling. Fixes #226.
+
+## [0.16.22] - 2026-11-19
+
+### Fixed
+- Resolve omitted inference output limits once from `llm.max_output_tokens`, preserving explicit client limits through routing and canonical provider dispatch instead of enforcing an inline 4096-token fallback. Fixes #225.
+
+## [0.16.21] - 2026-11-19
+
+### Fixed
+- Build pipeline timing tables and native tool-loop response diagnostics only when DEBUG logging is enabled, retaining recorded timings and canonical responses in synchronous and streaming paths. Count registered tools through the registry's constant-time count API instead of copying its snapshot for discovery diagnostics ([#223](https://github.com/LegionIO/legion-llm/issues/223)).
+
 ## [0.16.20] - 2026-11-18
 
 ### Fixed

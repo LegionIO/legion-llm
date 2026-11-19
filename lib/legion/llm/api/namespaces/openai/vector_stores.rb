@@ -139,7 +139,7 @@ module Legion
               chunk_ds = Legion::LLM::VectorStore::Storage.db[:llm_vector_store_chunks]
                                                           .where(vector_store_id: params[:id])
                                                           .select(:file_id, :vector_store_file_id, :chunk_index, :text, :embedding_json)
-                                                          .limit(VectorStore::Storage::MAX_SCAN_CHUNKS)
+                                                          .limit(Legion::Settings[:llm][:vector_store][:max_scan_chunks])
               chunk_ds = chunk_ds.where(file_id: Array(filters[:file_ids])) if filters.is_a?(Hash) && filters[:file_ids]
 
               chunks = chunk_ds.all

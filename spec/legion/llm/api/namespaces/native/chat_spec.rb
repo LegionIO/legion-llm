@@ -15,10 +15,7 @@ RSpec.describe 'Legion::LLM::API::Namespaces::Native::Chat' do
   end
 
   after(:all) do
-    if defined?(Legion::LLM::API::Namespaces::Native::Chat::ASYNC_POOL)
-      Legion::LLM::API::Namespaces::Native::Chat::ASYNC_POOL.shutdown
-      Legion::LLM::API::Namespaces::Native::Chat::ASYNC_POOL.wait_for_termination(5)
-    end
+    Legion::LLM::API::Namespaces::Native::Chat.shutdown_pool
   end
 
   let(:app) do

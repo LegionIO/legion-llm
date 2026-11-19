@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.messages.first.role).to eq(:user)
       expect(req.messages.first.content).to eq('hello')
       expect(req.routing).to eq({ provider: nil, model: nil })
-      expect(req.tokens).to eq({ max: 4096 })
+      expect(req.tokens).to eq({ max: 64_000 })
       expect(req.priority).to eq(:normal)
       expect(req.stream).to eq(false)
       expect(req.caller).to be_nil
@@ -136,6 +136,36 @@ RSpec.describe Legion::LLM::Inference::Request do
 
       expect(req.id).to eq('req_api_123')
       expect(req.extra).not_to have_key(:request_id)
+    end
+  end
+
+  %i[build from_chat_args].each do |entrypoint|
+    describe ".#{entrypoint} output limits" do
+      before { Legion::Settings[:llm][:max_output_tokens] = 12_345 }
+
+      [{}, { tokens: nil }, { tokens: {} }, { tokens: { max: nil } }].each do |input|
+        it "resolves an omitted limit from settings for #{input.inspect}" do
+          request = described_class.public_send(entrypoint, **input)
+          expect(request.tokens).to eq(max: 12_345)
+          Legion::Settings[:llm][:max_output_tokens] = 23_456
+          expect(request.tokens).to eq(max: 12_345)
+        end
+      end
+
+      it 'preserves an explicit limit and other token constraints without mutating the caller' do
+        tokens = { max: 32_768, budget: 50_000 }.freeze
+        request = described_class.public_send(entrypoint, tokens: tokens)
+
+        expect(request.tokens).to eq(tokens)
+      end
+
+      it 'fills only the missing limit and retains the other token constraints' do
+        tokens = { budget: 50_000 }.freeze
+        request = described_class.public_send(entrypoint, tokens: tokens)
+
+        expect(request.tokens).to eq(max: 12_345, budget: 50_000)
+        expect(tokens).to eq(budget: 50_000)
+      end
     end
   end
 

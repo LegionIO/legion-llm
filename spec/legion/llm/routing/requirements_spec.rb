@@ -11,7 +11,7 @@ RSpec.describe Legion::LLM::Router, :ssot_v3 do
     SsotV3SnapshotFactory.activate(
       provider_family: provider, instance_id: instance,
       drafts: [SsotV3SnapshotFactory.offering_draft(
-        model: 'test-model', capabilities: capabilities, context: 32_768,
+        model: 'test-model', capabilities: capabilities, context: 131_072,
         weight_inputs: { tier: 100, provider: 100, instance: 100, model_or_offering: 100 }, base_weight: 100_000_000
       )]
     )

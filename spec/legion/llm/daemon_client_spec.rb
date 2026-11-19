@@ -11,13 +11,13 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   # constants
   # ──────────────────────────────────────────────
-  describe 'constants' do
-    it 'defines HEALTH_CACHE_TTL as 30' do
-      expect(described_class::HEALTH_CACHE_TTL).to eq(30)
+  describe 'registered timeout defaults' do
+    it 'registers the health cache TTL' do
+      expect(Legion::Settings[:llm][:daemon][:health_cache_ttl]).to eq(30)
     end
 
-    it 'defines DEFAULT_TIMEOUT as 60' do
-      expect(described_class::DEFAULT_TIMEOUT).to eq(60)
+    it 'registers the HTTP read timeout' do
+      expect(Legion::Settings[:llm][:daemon][:read_timeout]).to eq(60)
     end
   end
 
@@ -26,16 +26,16 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.reset!' do
     it 'clears cached url' do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
       described_class.daemon_url # populate cache
       described_class.reset!
-      Legion::Settings[:llm][:daemon] = { url: 'http://other:9000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://other:9000')
       expect(described_class.daemon_url).to eq('http://other:9000')
     end
 
     it 'clears healthy state' do
       allow(described_class).to receive(:check_health).and_return(true)
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
       described_class.available? # populate health cache
       described_class.reset!
       # After reset, available? should re-call check_health
@@ -61,7 +61,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   describe '.daemon_url' do
     context 'when LLM settings include a daemon url' do
       before do
-        Legion::Settings[:llm][:daemon] = { url: 'http://daemon:4000' }
+        Legion::Settings[:llm][:daemon].merge!(url: 'http://daemon:4000')
       end
 
       it 'returns the url from settings' do
@@ -77,7 +77,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon url is nil in settings' do
       before do
-        Legion::Settings[:llm][:daemon] = { url: nil }
+        Legion::Settings[:llm][:daemon].merge!(url: nil)
       end
 
       it 'returns nil' do
@@ -87,7 +87,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon is disabled in settings' do
       before do
-        Legion::Settings[:llm][:daemon] = { enabled: false, url: 'http://daemon:4000' }
+        Legion::Settings[:llm][:daemon].merge!(enabled: false, url: 'http://daemon:4000')
       end
 
       it 'returns nil even when a url is configured' do
@@ -135,7 +135,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon is disabled' do
       before do
-        Legion::Settings[:llm][:daemon] = { enabled: false, url: 'http://localhost:4000' }
+        Legion::Settings[:llm][:daemon].merge!(enabled: false, url: 'http://localhost:4000')
       end
 
       it 'returns false without calling check_health' do
@@ -146,7 +146,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon_url is present and health check passes' do
       before do
-        Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+        Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
         allow(described_class).to receive(:check_health).and_return(true)
       end
 
@@ -157,7 +157,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'when daemon_url is present and health check fails' do
       before do
-        Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+        Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
         allow(described_class).to receive(:check_health).and_return(false)
       end
 
@@ -168,7 +168,7 @@ RSpec.describe Legion::LLM::DaemonClient do
 
     context 'caching behavior' do
       before do
-        Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+        Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
       end
 
       it 'caches healthy result for HEALTH_CACHE_TTL seconds' do
@@ -187,7 +187,7 @@ RSpec.describe Legion::LLM::DaemonClient do
         # Simulate TTL expiry by manipulating timestamp
         described_class.instance_variable_set(:@health_checked_at,
                                               Process.clock_gettime(Process::CLOCK_MONOTONIC) -
-                                              described_class::HEALTH_CACHE_TTL - 1)
+                                              Legion::Settings[:llm][:daemon][:health_cache_ttl] - 1)
 
         expect(described_class).to receive(:check_health).and_return(true)
         described_class.available?
@@ -229,7 +229,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.check_health' do
     before do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
     end
 
     context 'when daemon returns 200' do
@@ -272,7 +272,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.http_post' do
     before do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
     end
 
     it 'makes a POST request to the daemon URL with JSON body' do
@@ -395,7 +395,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.chat' do
     before do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
       allow(described_class).to receive(:available?).and_return(true)
     end
 
@@ -540,7 +540,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.http_post timeout override' do
     before do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
     end
 
     it 'uses DEFAULT_TIMEOUT when no timeout argument is given' do
@@ -548,7 +548,7 @@ RSpec.describe Legion::LLM::DaemonClient do
       allow(http).to receive(:use_ssl=)
       allow(http).to receive(:open_timeout=)
       allow(http).to receive(:request).and_return(double('Response', code: '200', body: '{}'))
-      expect(http).to receive(:read_timeout=).with(described_class::DEFAULT_TIMEOUT)
+      expect(http).to receive(:read_timeout=).with(Legion::Settings[:llm][:daemon][:read_timeout])
       allow(Net::HTTP).to receive(:new).and_return(http)
 
       described_class.http_post('/api/llm/chat', {})
@@ -571,7 +571,7 @@ RSpec.describe Legion::LLM::DaemonClient do
   # ──────────────────────────────────────────────
   describe '.inference' do
     before do
-      Legion::Settings[:llm][:daemon] = { url: 'http://localhost:4000' }
+      Legion::Settings[:llm][:daemon].merge!(url: 'http://localhost:4000')
     end
 
     context 'when daemon returns 200 with content' do

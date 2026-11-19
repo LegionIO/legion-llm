@@ -12,18 +12,16 @@ module Legion
       TokenError = ::Legion::Extensions::Llm::Fleet::TokenError unless const_defined?(:TokenError, false)
 
       module TokenIssuer
-        ISSUER = 'legion-llm'
-        AUDIENCE = 'lex-llm-fleet-worker'
-        ALGORITHM = 'HS256'
+        extend Legion::Logging::Helper
 
         module_function
 
         def issue(payload)
-          ttl = token_ttl_seconds
+          ttl = Integer(Legion::Settings[:llm][:fleet][:dispatch][:token_ttl_seconds])
           now = Time.now.to_i
           claims = required_claims(payload).merge(
-            iss: issuer,
-            aud: audience,
+            iss: Legion::Settings[:llm][:fleet][:auth][:issuer],
+            aud: Legion::Settings[:llm][:fleet][:auth][:audience],
             iat: now,
             exp: now + ttl,
             nbf: now,
@@ -34,8 +32,8 @@ module Legion
             claims,
             signing_key: signing_key,
             ttl:         ttl,
-            issuer:      issuer,
-            algorithm:   algorithm
+            issuer:      Legion::Settings[:llm][:fleet][:auth][:issuer],
+            algorithm:   Legion::Settings[:llm][:fleet][:auth][:algorithm]
           )
         rescue TokenError
           raise
@@ -79,27 +77,6 @@ module Legion
           claims[:execution_contract] = execution_contract
           claims[:offering_id] = offering_id
           claims
-        end
-
-        def token_ttl_seconds
-          Integer(Legion::Settings[:llm][:fleet][:dispatch][:token_ttl_seconds])
-        end
-
-        def issuer
-          auth_setting(:issuer, default: ISSUER)
-        end
-
-        def audience
-          auth_setting(:audience, default: AUDIENCE)
-        end
-
-        def algorithm
-          auth_setting(:algorithm, default: ALGORITHM)
-        end
-
-        def auth_setting(key, default:)
-          val = Legion::Settings[:llm][:fleet][:auth][key]
-          val.nil? ? default : val
         end
 
         def signing_key

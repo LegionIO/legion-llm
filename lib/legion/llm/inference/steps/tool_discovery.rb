@@ -43,12 +43,12 @@ module Legion
           private
 
           def discover_registry_tools
-            unless Legion::Settings::Extensions.respond_to?(:tools) &&
+            unless Legion::Settings::Extensions.respond_to?(:tool_count) &&
                    Legion::Settings::Extensions.respond_to?(:filter_tools)
               log_step_debug(:tool_discovery, :registry_skipped, reason: :settings_extensions_unavailable)
               return
             end
-            total_registered = Array(Legion::Settings::Extensions.tools).size
+            total_registered = Legion::Settings::Extensions.tool_count
             unless total_registered.positive?
               log_step_debug(:tool_discovery, :registry_skipped, reason: :no_registered_tools)
               return
@@ -73,11 +73,11 @@ module Legion
               }
             end
 
-            log.info(
+            log.info do
               "[llm][tools] discover request_id=#{@request.id} " \
-              "settings_extensions_always=#{entries.size} " \
-              "settings_extensions_total=#{Array(Legion::Settings::Extensions.tools).size}"
-            )
+                "settings_extensions_always=#{entries.size} " \
+                "settings_extensions_total=#{Legion::Settings::Extensions.tool_count}"
+            end
           end
 
           def build_entry_source(entry)

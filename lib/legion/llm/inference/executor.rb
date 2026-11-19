@@ -6,6 +6,7 @@ require 'faraday'
 require_relative '../publisher_identity'
 require_relative '../tools/special'
 require_relative '../tools/mcp_execution'
+require 'legion/llm/inference/background'
 require_relative 'native_tool_loop'
 require_relative 'route_attempts'
 require_relative 'executor/routing'
@@ -70,7 +71,7 @@ module Legion
 
         STEPS = (PRE_PROVIDER_STEPS + %i[provider_call] + POST_PROVIDER_STEPS).freeze
 
-        ASYNC_SAFE_STEPS = %i[post_response knowledge_capture].freeze
+        ASYNC_SAFE_STEPS = %i[knowledge_capture].freeze
 
         THINKING_TAG_PAIRS = [
           ['<thinking>', '</thinking>'],
@@ -101,8 +102,6 @@ module Legion
         ].freeze
 
         ToolResultEvent = Struct.new(:result, :tool_call_id, :tool_name, :started_at, :status, keyword_init: true)
-
-        ASYNC_THREAD_POOL = Concurrent::FixedThreadPool.new(4, fallback_policy: :caller_runs)
 
         def initialize(request)
           @request = request
@@ -270,10 +269,9 @@ module Legion
           executed = 0
           skipped = 0
           pipeline_start = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
-          step_timings = []
           @step_timing_hash = {}
           STEPS.each do |step|
-            if Profile.skip?(@profile, step)
+            if Legion::LLM::Inference::Profile.skip?(@profile, step)
               skipped += 1
               next
             end
@@ -281,16 +279,18 @@ module Legion
             t0 = ::Process.clock_gettime(::Process::CLOCK_MONOTONIC)
             execute_step(step) { send(:"step_#{step}") }
             elapsed_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - t0) * 1000).round
-            step_timings << "#{step}=#{elapsed_ms}ms"
             @step_timing_hash[step] = elapsed_ms
             executed += 1
           end
           total_ms = ((::Process.clock_gettime(::Process::CLOCK_MONOTONIC) - pipeline_start) * 1000).round
           @step_timing_hash[:total] = total_ms
           @timestamps[:step_timings] = @step_timing_hash
-          log.warn("[pipeline][timing] request_id=#{@request.id} conversation_id=#{@request.conversation_id} " \
-                   "provider=#{@resolved_provider} model=#{@resolved_model} profile=#{@profile} " \
-                   "total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings.join(' ')}")
+          log.debug do
+            step_timings = @step_timing_hash.except(:total).map { |step, duration| "#{step}=#{duration}ms" }.join(' ')
+            "[pipeline][timing] request_id=#{@request.id} conversation_id=#{@request.conversation_id} " \
+              "provider=#{@resolved_provider} model=#{@resolved_model} profile=#{@profile} " \
+              "total=#{total_ms}ms executed=#{executed} skipped=#{skipped} #{step_timings}"
+          end
           annotate_top_level_span(steps_executed: executed, steps_skipped: skipped)
         end
 
@@ -563,7 +563,7 @@ module Legion
           log.debug "[llm][executor] action=pre_provider_steps.enter step_count=#{PRE_PROVIDER_STEPS.size} profile=#{@profile}"
           skipped = []
           PRE_PROVIDER_STEPS.each do |step|
-            if Profile.skip?(@profile, step)
+            if Legion::LLM::Inference::Profile.skip?(@profile, step)
               skipped << step
               next
             end
@@ -584,7 +584,7 @@ module Legion
           else
             skipped = []
             POST_PROVIDER_STEPS.each do |step|
-              if Profile.skip?(@profile, step)
+              if Legion::LLM::Inference::Profile.skip?(@profile, step)
                 skipped << step
                 next
               end
@@ -601,32 +601,39 @@ module Legion
 
         def execute_post_provider_steps_mixed
           POST_PROVIDER_STEPS.each do |step|
-            next if Profile.skip?(@profile, step)
-            next if ASYNC_SAFE_STEPS.include?(step)
+            next if Legion::LLM::Inference::Profile.skip?(@profile, step)
+            next if ASYNC_SAFE_STEPS.include?(step) || step == :post_response
 
             execute_step(step) { send(:"step_#{step}") }
           end
 
-          async_steps = POST_PROVIDER_STEPS.select { |s| ASYNC_SAFE_STEPS.include?(s) }
+          # Audit the final envelope after normalization, metering and context
+          # storage, as the old async path did, without optional admission.
+          execute_step(:post_response) { step_post_response } unless Legion::LLM::Inference::Profile.skip?(@profile, :post_response)
+
+          async_steps = ASYNC_SAFE_STEPS.reject { |step| Legion::LLM::Inference::Profile.skip?(@profile, step) }
+          async_steps.delete(:knowledge_capture) unless knowledge_capture_requested?
           return if async_steps.empty?
 
-          # Snapshot timeline and warnings before firing the async thread so that
-          # build_response (called on the main thread immediately after) reads a
-          # consistent, immutable view rather than racing with async writes.
+          # Prompt audit and metering stay outside optional-work admission.
+          # Only capture runs here; its I/O must not enqueue a second job.
           @_response_timeline_snapshot = @timeline.events.dup.freeze
           @_response_warnings_snapshot = @warnings.dup.freeze
           @_response_participants_snapshot = @timeline.participants.dup.freeze
-
           profile = @profile
-          ASYNC_THREAD_POOL.post do
+          accepted = Legion::LLM::Inference::Background.post(workload: :post_steps) do
             async_steps.each do |step|
-              next if Profile.skip?(profile, step)
+              next if Legion::LLM::Inference::Profile.skip?(profile, step)
 
-              send(:"step_#{step}")
+              send(:"step_#{step}", async: false)
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.async_post_steps', steps: async_steps)
           end
+          return if accepted
+
+          @warnings << 'optional post-response capture skipped: background executor unavailable'
+          @_response_warnings_snapshot = @warnings.dup.freeze
         end
 
         private :execute_post_provider_steps_mixed
@@ -730,7 +737,7 @@ module Legion
 
           @tool_event_handler&.call(
             type: :tool_result, tool_call_id: tc_id, tool_name: tc_name,
-            result: result_str[0, 4096], result_size: result_str.bytesize, status: is_error ? :error : :success,
+            result: result_str[0, Legion::Settings[:llm][:compliance][:tool_audit_result_max_chars]], result_size: result_str.bytesize, status: is_error ? :error : :success,
             started_at: started_at, finished_at: finished_at, duration_ms: duration_ms
           )
 
@@ -748,6 +755,9 @@ module Legion
 
         def flush_deferred_tool_audits
           return if @deferred_tool_audits.empty?
+
+          result_limit = Legion::Settings[:llm][:compliance][:tool_audit_result_max_chars]
+          raise ArgumentError, 'llm.compliance.tool_audit_result_max_chars must be a nonnegative integer' unless result_limit.is_a?(Integer) && result_limit >= 0
 
           audits = @deferred_tool_audits.dup
           @deferred_tool_audits.clear
@@ -774,7 +784,7 @@ module Legion
                   started_at:  audit[:started_at],
                   finished_at: audit[:finished_at]
                 },
-                result:          audit[:result_str][0, 4096],
+                result:          audit[:result_str][0, result_limit],
                 caller:          caller_data,
                 classification:  classification,
                 tracing:         tracing,
@@ -1541,7 +1551,7 @@ module Legion
           output = @extracted_tokens.respond_to?(:output_tokens) ? @extracted_tokens.output_tokens : 0
           return {} unless @resolved_model && (input + output).positive?
 
-          estimated = Metering::Pricing.estimate(
+          estimated = Legion::LLM::Metering::Pricing.estimate(
             model_id:      @resolved_model,
             input_tokens:  input,
             output_tokens: output

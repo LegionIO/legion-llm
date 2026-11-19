@@ -77,7 +77,7 @@ module Legion
             tools:                     kwargs.key?(:tools) ? kwargs[:tools] : nil,
             tool_choice:               kwargs.fetch(:tool_choice, { mode: :auto }),
             routing:                   routing,
-            tokens:                    kwargs.fetch(:tokens, { max: 4096 }),
+            tokens:                    resolve_tokens(kwargs[:tokens]),
             stop:                      kwargs.fetch(:stop, { sequences: [] }),
             generation:                kwargs.fetch(:generation, {}),
             thinking:                  Legion::Extensions::Llm::Canonical::Request.normalize_thinking!(kwargs[:thinking], 'Inference::Request.build'),
@@ -137,7 +137,7 @@ module Legion
             context_strategy: kwargs.fetch(:context_strategy, :auto),
             cache:            kwargs[:cache] || { strategy: :default, cacheable: true },
             fork:             kwargs[:fork],
-            tokens:           kwargs[:tokens] || { max: 4096 },
+            tokens:           kwargs[:tokens],
             stop:             kwargs[:stop] || { sequences: [] },
             modality:         kwargs[:modality],
             hooks:            kwargs[:hooks],
@@ -159,6 +159,17 @@ module Legion
           build_args[:id] = request_id if request_id
           build(**build_args)
         end
+
+        # Resolve the omitted limit once at ingress. Routing and provider
+        # dispatch consume this same request value, including after tool rounds.
+        def self.resolve_tokens(tokens)
+          tokens ||= {}
+          return tokens unless tokens[:max].nil?
+
+          tokens.merge(max: Legion::Settings[:llm][:max_output_tokens])
+        end
+
+        private_class_method :resolve_tokens
 
         # SSOT v3 §7.2 test helper: delegates to the production normalization
         # path, substituting only a deterministic RoutingContext. It cannot

@@ -14,9 +14,6 @@ module Legion
             module Parts
               extend Legion::Logging::Helper
 
-              MAX_PART_SIZE_BYTES = (ENV.fetch('LEGION_UPLOAD_MAX_PART_MB', '64').to_i * 1024 * 1024)
-              MAX_TOTAL_UPLOAD_BYTES = (ENV.fetch('LEGION_UPLOAD_MAX_TOTAL_MB', '512').to_i * 1024 * 1024)
-
               def self.registered(app)
                 log.debug('[llm][api][namespaces][openai][parts] registering routes')
 
@@ -40,9 +37,11 @@ module Legion
 
                   raw_data = Parts.extract_part_data(request, params)
 
-                  if raw_data.bytesize > MAX_PART_SIZE_BYTES
+                  max_part_size_bytes = Legion::Settings[:llm][:files][:max_part_size_bytes]
+                  max_total_upload_bytes = Legion::Settings[:llm][:files][:max_total_upload_bytes]
+                  if raw_data.bytesize > max_part_size_bytes
                     halt 413, { 'Content-Type' => 'application/json' },
-                         Legion::JSON.dump({ error: { message: "Part size #{raw_data.bytesize} bytes exceeds maximum #{MAX_PART_SIZE_BYTES} bytes.",
+                         Legion::JSON.dump({ error: { message: "Part size #{raw_data.bytesize} bytes exceeds maximum #{max_part_size_bytes} bytes.",
                                                       type: 'invalid_request_error', code: 'part_too_large' } })
                   end
 
@@ -50,9 +49,9 @@ module Legion
                     Uploads::UPLOAD_STORE[upload_id][:parts].sum { |p| p[:data].bytesize }
                   end
 
-                  if existing_total + raw_data.bytesize > MAX_TOTAL_UPLOAD_BYTES
+                  if existing_total + raw_data.bytesize > max_total_upload_bytes
                     halt 413, { 'Content-Type' => 'application/json' },
-                         Legion::JSON.dump({ error: { message: "Total upload size would exceed #{MAX_TOTAL_UPLOAD_BYTES / 1024 / 1024}MB limit.",
+                         Legion::JSON.dump({ error: { message: "Total upload size would exceed #{max_total_upload_bytes / 1024 / 1024}MB limit.",
                                                       type: 'invalid_request_error', code: 'upload_too_large' } })
                   end
 

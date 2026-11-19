@@ -3,6 +3,11 @@
 require 'spec_helper'
 
 RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
+  after do
+    expect(Legion::LLM::Inference::Background.shutdown).to be true
+    Legion::LLM::Inference::Background.start
+  end
+
   let(:klass) do
     Class.new do
       include Legion::LLM::Inference::Steps::KnowledgeCapture
@@ -82,7 +87,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
 
       it 'dispatches evaluate_and_route async' do
         executor.call
-        sleep 0.2
+        expect(Legion::LLM::Inference::Background.shutdown).to be true
         expect(Legion::Extensions::Apollo::Helpers::Writeback).to have_received(:evaluate_and_route)
       end
     end
@@ -138,7 +143,7 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       step.raw_response = double(content: 'response text')
 
       step.step_knowledge_capture
-      sleep 0.2
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
       expect(apollo_local).to have_received(:ingest).with(
         hash_including(content: 'response text')
       )
@@ -155,8 +160,9 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
 
       step = klass.new(local_request)
-      step.raw_response = double(message: { content: 'answer' }, routing: { model: 'test-model' })
+      step.raw_response = double(content: 'answer')
       step.step_knowledge_capture
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
       expect(step.warnings.none? { |w| w.include?('local_knowledge') }).to be true
     end
 
@@ -171,8 +177,28 @@ RSpec.describe Legion::LLM::Inference::Steps::KnowledgeCapture do
       Legion::Settings[:llm][:knowledge_capture][:local_ingest_enabled] = true
 
       step = klass.new(local_request)
-      step.raw_response = double(message: { content: 'answer' }, routing: { model: 'test-model' })
+      step.raw_response = double(content: 'answer')
       expect { step.step_knowledge_capture }.not_to raise_error
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
+      expect(step.warnings).to include('local_knowledge_capture error: db locked')
+    end
+  end
+  describe 'registered capture policy' do
+    it 'does not dispatch capture when enablement keys are missing' do
+      Legion::Settings[:llm][:knowledge_capture] = {}
+      Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
+      step = klass.new(request)
+      expect(step).not_to receive(:current_response)
+      step.step_knowledge_capture
+    end
+
+    it 'clips stored content and uses configured confidence at the ingest boundary' do
+      local = Module.new
+      stub_const('Legion::Apollo::Local', local)
+      Legion::Settings[:llm][:knowledge_capture].merge!(max_content_chars: 4, confidence: 0.95)
+      expect(local).to receive(:ingest).with(hash_including(content: 'abcd', confidence: 0.95))
+      klass.new(request).send(:ingest_to_local,
+                              response: double(message: { content: 'abcdefgh' }, routing: { model: 'test' }))
     end
   end
 end

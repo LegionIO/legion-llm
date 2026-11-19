@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.20-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.21-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -271,6 +271,10 @@ Config-driven via `settings[:llm][:api][:auth]`. Disabled by default for local d
 When enabled, validates `Authorization: Bearer <token>` or `x-api-key` headers against the configured `api_keys` list. The client authenticates to Legion; Legion authenticates to providers separately.
 
 ## Configuration
+
+Runtime tunables and their defaults are owned by [`settings.rb`](lib/legion/llm/settings.rb)
+and its existing `settings/` modules. See [runtime settings](RUNTIME_SETTINGS.md)
+for units, override behavior, storage paths and pool lifecycle.
 
 Provider defaults now live in each `lex-llm-*` provider extension. `legion-llm` ships an empty `providers: {}` hash; settings files and extension registrations populate it at runtime.
 

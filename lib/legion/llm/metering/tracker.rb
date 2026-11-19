@@ -1,21 +1,12 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/metering/estimator'
 module Legion
   module LLM
     module Metering
       module Recorder
         extend Legion::Logging::Helper
-
-        # Default per-1M-token pricing in USD (input / output).
-        # Overridable via Legion::Settings[:llm][:pricing].
-        DEFAULT_PRICING = {
-          'claude-sonnet-4-6' => { input: 3.0,  output: 15.0 },
-          'claude-haiku-4-5'  => { input: 0.80, output: 4.0  },
-          'claude-opus-4-6'   => { input: 15.0, output: 75.0 },
-          'gpt-4o'            => { input: 2.50, output: 10.0 },
-          'gpt-4o-mini'       => { input: 0.15, output: 0.60 }
-        }.freeze
 
         class << self
           # Records a completed LLM request and calculates its cost.
@@ -26,9 +17,7 @@ module Legion
           # @param provider      [Symbol, nil]  provider (informational)
           # @return [Hash] the recorded entry
           def record(model:, input_tokens:, output_tokens:, provider: nil)
-            pricing = pricing_for(model)
-            cost    = (input_tokens * pricing[:input] / 1_000_000.0) +
-                      (output_tokens * pricing[:output] / 1_000_000.0)
+            cost = Legion::LLM::Metering::Pricing.estimate(model_id: model, input_tokens: input_tokens, output_tokens: output_tokens)
 
             entry = {
               model:         model,
@@ -75,31 +64,14 @@ module Legion
           # @param model [String] model identifier
           # @return [Hash] with :input and :output keys (per-1M-token USD)
           def pricing_for(model)
-            custom = settings_pricing
-            custom[model.to_s] || DEFAULT_PRICING[model.to_s] || { input: 5.0, output: 15.0 }
+            input, output = Legion::LLM::Metering::Pricing.resolve_price(model_id: model)
+            { input: input, output: output }
           end
 
           private
 
           def records
             @records ||= []
-          end
-
-          def settings_pricing
-            pricing = Legion::Settings[:llm][:pricing]
-            return {} unless pricing.is_a?(Hash)
-
-            pricing.transform_values do |entry|
-              next entry unless entry.is_a?(Hash)
-
-              {
-                input:  entry[:input],
-                output: entry[:output]
-              }
-            end
-          rescue StandardError => e
-            handle_exception(e, level: :warn)
-            {}
           end
         end
       end

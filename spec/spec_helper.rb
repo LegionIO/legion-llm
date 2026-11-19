@@ -19,32 +19,6 @@ require_relative 'support/transport_stub'
 require 'legion/llm'
 require_relative 'support/ssot_v3_snapshot_factory'
 
-# Test-only: make Legion::Settings.reset! race-free.
-#
-# The stock reset! sets the Settings @loader to nil and relies on the next
-# merge_settings to recreate it. That nil window is racy: background threads
-# that legion-llm itself spawns (the executor's ASYNC_THREAD_POOL post-steps,
-# the audit Concurrent::Promises task, the metering spool) read Legion::Settings
-# while working. Any such read that lands inside the nil window triggers
-# Settings#load, which creates and assigns a brand-new Loader. If that
-# assignment lands AFTER the main thread's merge_settings, @loader points at a
-# loader that never received the :llm tree, so Settings[:llm] is nil for the
-# rest of the example — an order-dependent NoMethodError in later specs
-# (e.g. prompt_spec's pipeline steps dereferencing Settings[:llm][:tools]).
-#
-# Replacing the nil-window with a single atomic swap of a fresh,
-# default-populated loader means @loader is never nil, so background readers
-# never trigger a racy load. This is behaviorally identical to stock reset!
-# for the spec suite (the ivars stock reset! also clears — @schema,
-# @registered_libraries, @reload_callbacks, @loaded — are inert here: no spec
-# uses validate!/register_library/watch!/overlays, and @loaded is never set
-# because specs pass no config files).
-Legion::Settings.define_singleton_method(:reset!) do
-  fresh_loader = Legion::Settings::Loader.new
-  fresh_loader.load_env
-  Legion::Settings.loader = fresh_loader
-end
-
 def native_dispatch_result(content: 'test response', input_tokens: 10, output_tokens: 5, tool_calls: [])
   canonical = Legion::Extensions::Llm::Canonical
   usage = canonical::Usage.new(
@@ -214,10 +188,9 @@ end
 RSpec.configure do |config|
   config.before(:each) do
     Legion::Settings.reset!
-    Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
+    Legion::LLM::Settings.register_defaults!
     Legion::LLM::Routing::SettingsState.reset!
-    Legion::Settings.merge_settings('transport', Legion::Transport::Settings.default) if
-      defined?(Legion::Transport::Settings)
+    Legion::Settings.register_library(:transport, Legion::Transport::Settings.default)
     Legion::Settings[:logging][:level] = :fatal
     Legion::LLM::Call::Registry.reset! if defined?(Legion::LLM::Call::Registry)
     # Re-register standard providers after reset so router resolution works

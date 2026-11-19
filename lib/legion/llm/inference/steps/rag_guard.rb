@@ -33,7 +33,7 @@ module Legion
             result = Hooks::RagGuard.check_rag_faithfulness(
               response:  response_text,
               context:   context.map { |e| e[:content] }.join("\n"),
-              threshold: rag_faithfulness_threshold
+              threshold: Legion::Settings[:llm][:rag_guard][:threshold]
             )
 
             unless result.is_a?(Hash)
@@ -57,7 +57,7 @@ module Legion
               direction: :internal, detail: detail,
               from: 'rag_guard', to: 'pipeline'
             )
-            return unless rag_block_on_failure?
+            return unless Legion::Settings[:llm][:rag_guard][:block_on_failure]
 
             raise Legion::LLM::PipelineError.new("RAG faithfulness failed: #{detail}", step: :rag_guard)
           rescue Legion::LLM::PipelineError
@@ -68,26 +68,6 @@ module Legion
           end
 
           private
-
-          def rag_guard_settings
-            Legion::Settings[:llm][:rag_guard]
-          rescue StandardError => e
-            handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_guard.settings')
-            {}
-          end
-
-          def rag_guard_setting(key, default)
-            value = rag_guard_settings[key]
-            value.nil? ? default : value
-          end
-
-          def rag_block_on_failure?
-            rag_guard_setting(:block_on_failure, true)
-          end
-
-          def rag_faithfulness_threshold
-            rag_guard_setting(:threshold, 0.7)
-          end
 
           def record_rag_faithfulness_audit(outcome, result, detail: nil)
             @audit[:'rag:faithfulness'] = {

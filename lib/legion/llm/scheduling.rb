@@ -6,16 +6,10 @@ module Legion
     module Scheduling
       extend Legion::Logging::Helper
 
-      # Default peak hours in UTC: 14:00-22:00 (9 AM - 5 PM CT)
-      DEFAULT_PEAK_RANGE = (14..22)
-
-      # Intents that are eligible for deferral during peak hours.
-      DEFAULT_DEFER_INTENTS = %i[batch background maintenance].freeze
-
       class << self
         # Returns true when off-peak scheduling is enabled in settings.
         def enabled?
-          Legion::Settings.dig(:llm, :scheduling, :enabled) == true
+          Legion::Settings[:llm][:scheduling][:enabled] == true
         end
 
         # Determines whether a request should be deferred to off-peak hours.
@@ -77,25 +71,17 @@ module Legion
         private
 
         def peak_range
-          raw = Legion::Settings.dig(:llm, :scheduling, :peak_hours_utc)
-          return DEFAULT_PEAK_RANGE unless raw.is_a?(String) && raw.include?('-')
+          raw = Legion::Settings[:llm][:scheduling][:peak_hours_utc]
+          raise ArgumentError, 'llm.scheduling.peak_hours_utc must be an hour range such as 14-22' unless raw.is_a?(String) && raw.match?(/\A\d{1,2}-\d{1,2}\z/)
 
-          parts = raw.split('-')
-          return DEFAULT_PEAK_RANGE unless parts.size == 2
+          start_h, end_h = raw.split('-').map { |hour| Integer(hour, 10) }
+          raise ArgumentError, 'llm.scheduling.peak_hours_utc must be an ordered range within 0-23' unless start_h.between?(0, 23) && end_h.between?(start_h, 23)
 
-          start_h = Integer(parts[0], 10)
-          end_h   = Integer(parts[1], 10)
           (start_h..end_h)
-        rescue ArgumentError => e
-          handle_exception(e, level: :warn, handled: true, operation: 'llm.scheduling.peak_range')
-          DEFAULT_PEAK_RANGE
         end
 
         def defer_intents
-          raw = Legion::Settings.dig(:llm, :scheduling, :defer_intents)
-          return DEFAULT_DEFER_INTENTS unless raw.is_a?(Array)
-
-          raw.map { |i| i.to_s.to_sym }
+          Legion::Settings[:llm][:scheduling][:defer_intents].map(&:to_sym)
         end
 
         def eligible_for_deferral?(intent)

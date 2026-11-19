@@ -8,19 +8,17 @@ RSpec.describe Legion::LLM::Context::Curator do
   subject(:curator) { described_class.new(conversation_id: conversation_id) }
 
   before do
-    Legion::Settings[:llm][:context_curation] = {
-      enabled:               true,
-      mode:                  'heuristic',
-      llm_assisted:          false,
-      llm_model:             nil,
-      tool_result_max_chars: 100,
-      thinking_eviction:     true,
-      exchange_folding:      true,
-      superseded_eviction:   true,
-      dedup_enabled:         true,
-      dedup_threshold:       0.85,
-      target_context_tokens: 40_000
-    }
+    Legion::Settings[:llm][:context_curation].merge!(enabled:               true,
+                                                     mode:                  'heuristic',
+                                                     llm_assisted:          false,
+                                                     llm_model:             nil,
+                                                     tool_result_max_chars: 100,
+                                                     thinking_eviction:     true,
+                                                     exchange_folding:      true,
+                                                     superseded_eviction:   true,
+                                                     dedup_enabled:         true,
+                                                     dedup_threshold:       0.85,
+                                                     target_context_tokens: 40_000)
     Legion::LLM::Inference::Conversation.reset!
   end
 
@@ -554,17 +552,22 @@ RSpec.describe Legion::LLM::Context::Curator do
   # --- async curation does not block caller ---
 
   describe '#curate_turn' do
+    after do
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
+      Legion::LLM::Inference::Background.start
+    end
+
     it 'submits work to the async pool without blocking' do
       messages = [{ role: :user, content: 'hi' }]
       expect { curator.curate_turn(turn_messages: messages, assistant_response: 'hello') }.not_to raise_error
-      sleep 0.1
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
     end
 
     it 'never raises even if curation fails internally' do
       allow(curator).to receive(:store_curated).and_raise(StandardError, 'storage failure')
       expect do
         curator.curate_turn(turn_messages: [{ role: :user, content: 'test' }], assistant_response: 'response')
-        sleep 0.1
+        expect(Legion::LLM::Inference::Background.shutdown).to be true
       end.not_to raise_error
     end
   end
@@ -572,11 +575,16 @@ RSpec.describe Legion::LLM::Context::Curator do
   # --- curated cache invalidation ---
 
   describe 'cache invalidation after async curation' do
+    after do
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
+      Legion::LLM::Inference::Background.start
+    end
+
     it 'clears @curated_messages after async work completes' do
       curator.instance_variable_set(:@curated_messages, [{ role: :user, content: 'stale' }])
 
       curator.curate_turn(turn_messages: [{ role: :user, content: 'msg' }], assistant_response: 'resp')
-      sleep 0.2
+      expect(Legion::LLM::Inference::Background.shutdown).to be true
 
       expect(curator.instance_variable_get(:@curated_messages)).to be_nil
     end

@@ -54,10 +54,9 @@ RSpec.describe Legion::LLM::Metering::Recorder do
     end
 
     it 'uses fallback pricing for unknown models' do
-      # Fallback: input: 5.0, output: 15.0
-      # 1000 * 5.0 / 1_000_000 + 500 * 15.0 / 1_000_000 = 0.005 + 0.0075 = 0.0125
+      # One registered fallback shared with estimation: input 1.0, output 3.0.
       entry = described_class.record(model: 'unknown-model-xyz', input_tokens: 1000, output_tokens: 500)
-      expect(entry[:cost_usd]).to be_within(0.000001).of(0.0125)
+      expect(entry[:cost_usd]).to be_within(0.000001).of(0.0025)
     end
   end
 
@@ -149,7 +148,7 @@ RSpec.describe Legion::LLM::Metering::Recorder do
 
     it 'returns fallback pricing for unknown models' do
       pricing = described_class.pricing_for('some-unknown-model')
-      expect(pricing).to eq({ input: 5.0, output: 15.0 })
+      expect(pricing).to eq({ input: 1.0, output: 3.0 })
     end
 
     it 'accepts model as a symbol and coerces it' do

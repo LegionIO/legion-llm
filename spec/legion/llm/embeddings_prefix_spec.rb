@@ -32,8 +32,8 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
     captured
   end
 
-  describe 'PREFIX_REGISTRY constant' do
-    let(:registry) { described_class::PREFIX_REGISTRY }
+  describe 'registered prefix policy' do
+    let(:registry) { Legion::Settings[:llm][:embedding][:prefix_registry] }
 
     it 'maps nomic-embed-text to document and query prefixes' do
       expect(registry['nomic-embed-text']).to include(document: 'search_document: ', query: 'search_query: ')
@@ -123,5 +123,29 @@ RSpec.describe Legion::LLM::Call::Embeddings, :ssot_v3 do
       described_class.generate_batch(texts: %w[foo bar], model: 'unknown-model', routing_seed: seed)
       expect(captured.last[:text]).to eq(%w[foo bar])
     end
+  end
+  it 'applies a configured chunk target at the real provider dispatch boundary' do
+    captured = publish_embed(model: 'unprefixed')
+    Legion::Settings[:llm][:embedding][:chunk_target_tokens] = 3
+    text = 'abcdefghijklmnopqrstuvwx'
+    result = described_class.generate(text: text, model: 'unprefixed', routing_seed: seed)
+    expect(result[:error]).to be_nil
+    dispatched = captured.flat_map { |entry| Array(entry[:text]) }
+    expect(dispatched).to eq(%w[abcdefghijkl mnopqrstuvwx])
+  end
+
+  it 'uses the embedding TTL owner when cache settings are partial' do
+    Legion::Settings[:llm][:embedding][:cache] = { enabled: true }
+    Legion::Settings.merge_settings(:llm, Legion::LLM::Settings.default)
+    expect(described_class.send(:cache_ttl)).to eq(86_400)
+    Legion::Settings[:llm][:embedding][:cache][:ttl] = 123
+    expect(described_class.send(:cache_ttl)).to eq(123)
+  end
+
+  it 'honors the configured preferred chunk boundary ratio' do
+    Legion::Settings[:llm][:embedding][:chunk_boundary_ratio] = 0.25
+    expect(described_class.send(:chunk_boundary, slice: 'abc defghi', max_chars: 10)).to eq(4)
+    Legion::Settings[:llm][:embedding][:chunk_boundary_ratio] = 0.5
+    expect(described_class.send(:chunk_boundary, slice: 'abc defghi', max_chars: 10)).to eq(10)
   end
 end

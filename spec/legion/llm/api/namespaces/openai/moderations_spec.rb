@@ -437,4 +437,19 @@ RSpec.describe 'Namespaces::OpenAI::Moderations' do
       expect(result[:category_scores].keys.size).to eq(11)
     end
   end
+  it 'enforces the configured input limit before dispatch' do
+    Legion::Settings[:llm][:moderation][:max_inputs] = 1
+    expect(Legion::LLM::Inference::Executor).not_to receive(:new)
+    post '/v1/moderations', Legion::JSON.dump(input: %w[first second]), 'CONTENT_TYPE' => 'application/json'
+    expect(last_response.status).to eq(400)
+    expect(Legion::JSON.load(last_response.body).dig(:error, :code)).to eq('too_many_inputs')
+  end
+
+  it 'passes the configured generation cap through the inference request' do
+    Legion::Settings[:llm][:moderation][:max_output_tokens] = 1234
+    allow(Legion::LLM::Inference::Executor).to receive(:new).and_return(double(call: mock_safe_response))
+    post '/v1/moderations', Legion::JSON.dump(input: 'hello'), 'CONTENT_TYPE' => 'application/json'
+    expect(last_response.status).to eq(200)
+    expect(Legion::LLM::Inference::Request).to have_received(:build).with(hash_including(tokens: { max: 1234 }))
+  end
 end

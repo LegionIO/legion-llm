@@ -237,4 +237,13 @@ RSpec.describe 'Namespaces::OpenAI::VectorStores' do
       expect(body[:error][:code]).to eq('embedding_unavailable')
     end
   end
+  it 'uses the configured database scan bound before scoring' do
+    Legion::Settings[:llm][:vector_store][:max_scan_chunks] = 7
+    allow(Legion::LLM::Call::Embeddings).to receive(:generate).and_return(vector: [1.0, 0.0])
+    allow(mock_ds).to receive(:select).and_return(mock_ds)
+    allow(mock_ds).to receive(:all).and_return([])
+    expect(mock_ds).to receive(:limit).with(7).and_return(mock_ds)
+    post "/v1/vector_stores/#{store_row[:id]}/search", Legion::JSON.dump(query: 'test'), 'CONTENT_TYPE' => 'application/json'
+    expect(last_response.status).to eq(200)
+  end
 end

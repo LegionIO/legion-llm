@@ -45,7 +45,7 @@ RSpec.describe Legion::LLM::Scheduling::OffPeak do
 
       before do
         allow(Time).to receive(:now).and_return(peak_time)
-        Legion::Settings[:llm][:scheduling] = { enabled: true }
+        Legion::Settings[:llm][:scheduling].merge!(enabled: true)
       end
 
       it 'returns true for normal priority' do
