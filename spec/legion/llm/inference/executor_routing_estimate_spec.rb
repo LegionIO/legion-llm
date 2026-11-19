@@ -97,12 +97,14 @@ RSpec.describe Legion::LLM::Inference::Executor, 'routing token estimate parity'
     # ~11k words = ~55k bytes > 8192×0.9 threshold; fits the 131k lane.
     let(:messages) { [{ role: :user, content: [{ type: 'text', text: 'word ' * 11_000 }] }] }
 
+    # Pin output so this regression isolates input accounting from the daemon default.
     # Provider pinned to vllm, no model pin — router selects the fitting lane.
     let(:request) do
       Legion::LLM::Inference::Request.build(
         messages: messages,
         system:   'You are a helpful assistant.',
-        routing:  { provider: :vllm }
+        routing:  { provider: :vllm },
+        tokens:   { max: 16_384 }
       )
     end
 

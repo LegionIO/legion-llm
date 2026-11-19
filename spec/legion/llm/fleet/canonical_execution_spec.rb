@@ -73,7 +73,7 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
     SsotV3SnapshotFactory.activate(
       provider_family: provider_family, instance_id: 'primary', callable: callable,
       drafts: [SsotV3SnapshotFactory.offering_draft(
-        model: model, capabilities: { vision: :supported }, context: 32_768, max_output: 8192,
+        model: model, capabilities: { vision: :supported }, context: 131_072, max_output: 65_536,
         weight_inputs: { tier: 100, provider: 100, instance: 100, model_or_offering: 100 }, base_weight: 100_000_000
       )]
     )

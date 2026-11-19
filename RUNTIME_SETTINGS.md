@@ -12,6 +12,7 @@ snapshot rather than rereading global configuration.
 
 | Settings group | Policy and units |
 | --- | --- |
+| `max_output_tokens` | Default output allowance of 65,536 tokens when the client omits a limit. Explicit client limits and operator overrides retain precedence. |
 | `daemon` | Health cache TTL and health/open/read/inference timeouts, in seconds. Per-call timeout wins. The daemon URL retains its existing cached-until-reset behavior. |
 | `context_curation` | Context target in tokens, recent-turn counts, exchange window in messages, result/preview/distillation/scan budgets in characters, command tail in lines. Existing archival policy is unchanged. |
 | `compressor` | Summary threshold in estimated tokens, input clipping multiplier in characters per token, summary budget ratio, dedup window in messages and minimum content in characters. These retain their existing compression-input meaning; generation uses the normal inference output budget. |

@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.29] - 2026-11-19
+
+### Changed
+- Raise the default `llm.max_output_tokens` allowance from 16,384 to 65,536 tokens. Explicit client limits and operator-configured defaults retain precedence. Refs #225.
+
 ## [0.16.28] - 2026-11-19
 
 ### Fixed

@@ -26,7 +26,7 @@ RSpec.describe Legion::LLM::Inference::Request do
       expect(req.messages.first.role).to eq(:user)
       expect(req.messages.first.content).to eq('hello')
       expect(req.routing).to eq({ provider: nil, model: nil })
-      expect(req.tokens).to eq({ max: 16_384 })
+      expect(req.tokens).to eq({ max: 65_536 })
       expect(req.priority).to eq(:normal)
       expect(req.stream).to eq(false)
       expect(req.caller).to be_nil
