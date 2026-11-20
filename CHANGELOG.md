@@ -1,5 +1,11 @@
 # Legion LLM Changelog
 
+## [0.16.37] - 2026-11-20
+
+### Fixed
+- Classify routing rejections within the request's pinned provider, instance, model, and tier scope. Unrelated unknown, unavailable, or initializing inventory no longer turns settled context, policy, or capability failures into retryable errors. Preserve relevant initializing publications when their model or tier is not yet known, keep global diagnostic counts, and retain the original requested context reservation.
+- Preserve Chat Completions `reasoning_effort` through canonical request parsing, JSON transport, inference construction, and provider dispatch. The shared canonical contract validates supported efforts without inventing a budget; invalid caller values receive HTTP 400 before execution instead of being silently ignored.
+
 ## [0.16.36] - 2026-11-20
 
 ### Fixed

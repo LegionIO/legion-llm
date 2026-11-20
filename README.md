@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.36-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.37-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -218,6 +218,18 @@ Each lane decision reads one immutable live Inventory snapshot; filters compare
 the Router's request facts with published evidence, ranking consumes stored weights,
 and dispatch preserves the resulting exact Selection. Retries retain the same
 Router, immutable facts and request-local attempt state.
+
+Rejection classification uses candidates inside the request's hard pins and
+operation scope. An unrelated provider's unknown or initializing state cannot
+soften a settled failure into a retryable error. Initializing publications remain
+relevant when their authoritative provider/instance keys match; their future
+model and tier membership is not inferred. Diagnostic counts still cover the
+captured inventory snapshot.
+
+Chat Completions `reasoning_effort` is translated into canonical thinking controls
+and preserved through inference and dispatch. Supported efforts, including `none`,
+use the canonical validation vocabulary; invalid values return HTTP 400 before
+provider execution. An omitted effort remains absent and no budget is invented.
 
 The client or configured output allowance remains the request's context reservation.
 Before each provider call, canonical dispatch caps that allowance to the selected

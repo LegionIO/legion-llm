@@ -64,6 +64,7 @@ module Legion
               tools:           tools,
               tool_choice:     tool_choice,
               params:          params,
+              thinking:        extract_reasoning_effort(body[:reasoning_effort]),
               stream:          body[:stream] == true,
               conversation_id: env['HTTP_X_LEGION_CONVERSATION_ID'] || body[:conversation_id],
               routing:         legion_routing_from_env(env),
@@ -109,6 +110,7 @@ module Legion
               client_model:    canonical_request.metadata[:client_model],
               tools:           tool_defs,
               tool_choice:     canonical_request.tool_choice,
+              thinking:        canonical_request.thinking,
               caller:          server_caller,
               conversation_id: canonical_request.conversation_id,
               metadata:        metadata.compact,
@@ -404,6 +406,14 @@ module Legion
           end
 
           private
+
+          def extract_reasoning_effort(effort)
+            return nil if effort.nil?
+
+            Legion::Extensions::Llm::Canonical::Thinking::Config.build(effort: effort)
+          rescue ArgumentError => e
+            raise Legion::LLM::Errors::InvalidRequest, e.message, cause: e
+          end
 
           def chunk_envelope(delta, finish_reason: nil)
             {
