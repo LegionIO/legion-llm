@@ -34,6 +34,8 @@
 > branching outside the translators. A Claude Code session can be served by an OpenAI Responses
 > backend — or the reverse — and never know the difference.
 
+Tool discovery and selection share one framework registry snapshot within each inference request. Registrations, replacements, and removals are visible to the next request. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
+
 ### Highlights
 
 - 🔀 **N × N any-to-any.** N client formats × N providers, in every direction, through one canonical core.

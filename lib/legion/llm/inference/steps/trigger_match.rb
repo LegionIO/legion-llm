@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 
 module Legion
@@ -9,17 +10,10 @@ module Legion
       module Steps
         module TriggerMatch
           include Legion::Logging::Helper
+          include Legion::LLM::Inference::RegistryTools
           include Steps::Logging
 
           def step_trigger_match
-            start_time = nil
-            extensions = settings_extensions
-            unless extensions.respond_to?(:tools)
-              log_step_debug(:trigger_match, :skipped, reason: :settings_extensions_unavailable)
-              log_trigger_match(:skipped, reason: :settings_extensions_unavailable)
-              return
-            end
-
             start_time = ::Time.now
 
             text = extract_recent_text
@@ -30,9 +24,9 @@ module Legion
             end
             log_step_debug(:trigger_match, :scanning, word_count: word_set.size)
 
-            matched, per_word = settings_extension_tool_matches(word_set, extensions)
+            matched, per_word = settings_extension_tool_matches(word_set)
             pre_filter_count = matched.size
-            subtract_always_loaded(matched, extensions)
+            subtract_always_loaded(matched)
             if matched.empty?
               log_step_debug(:trigger_match, :no_matches)
               log_trigger_match(:no_matches, word_count: word_set.size, pre_filter_count: pre_filter_count)
@@ -40,15 +34,16 @@ module Legion
             end
 
             limit = trigger_tool_limit
-            @triggered_tools = if matched.size <= limit
-                                 matched.to_a
-                               else
-                                 log.warn(
-                                   "[llm][steps][trigger_match] action=tools_capped request_id=#{@request.id} " \
-                                   "matched=#{matched.size} limit=#{limit} dropped=#{matched.size - limit}"
-                                 )
-                                 rank_and_cap(matched, per_word, limit)
-                               end
+            selected_names = if matched.size <= limit
+                               matched.to_a
+                             else
+                               log.warn(
+                                 "[llm][steps][trigger_match] action=tools_capped request_id=#{@request.id} " \
+                                 "matched=#{matched.size} limit=#{limit} dropped=#{matched.size - limit}"
+                               )
+                               rank_and_cap(matched, per_word, limit)
+                             end
+            @triggered_tools = selected_names.map { |name| registry_tool_snapshot[:by_name].fetch(name) }
 
             names = @triggered_tools.map { |tool| trigger_tool_name(tool) }
             if @triggered_tools.any?
@@ -125,26 +120,17 @@ module Legion
             text.downcase.gsub(/[^a-z ]/, ' ').split.to_set
           end
 
-          def settings_extensions
-            return unless defined?(Legion::Settings::Extensions)
-
-            Legion::Settings::Extensions
-          end
-
-          def settings_extension_tool_matches(word_set, extensions = settings_extensions)
+          def settings_extension_tool_matches(word_set)
             matched = Set.new
             per_word = Hash.new { |hash, word| hash[word] = Set.new }
-            return [matched, per_word] unless extensions.respond_to?(:tools)
-
-            Array(extensions.tools).each do |entry|
-              next unless entry.is_a?(Hash)
-
+            registry_tool_snapshot[:entries].each do |entry|
               tool_words = trigger_words_for_entry(entry)
               matching_words = word_set & tool_words
               next if matching_words.empty?
 
-              matched << entry
-              matching_words.each { |word| per_word[word] << entry }
+              name = entry.fetch(:name)
+              matched << name
+              matching_words.each { |word| per_word[word] << name }
             end
 
             [matched, per_word]
@@ -169,18 +155,13 @@ module Legion
               tools.each { |tool| scores[tool] += 1 }
             end
             matched.to_a
-                   .sort_by { |tool| [-scores[tool], trigger_tool_name(tool)] }
+                   .sort_by { |name| [-scores[name], name] }
                    .first(limit)
           end
 
-          def subtract_always_loaded(matched, extensions = settings_extensions)
-            unless extensions.respond_to?(:filter_tools)
-              log_step_debug(:trigger_match, :always_loaded_filter_skipped, reason: :settings_extensions_unavailable)
-              return
-            end
-
-            always = extensions.filter_tools(deferred: false).map { |t| t[:name] }
-            matched.reject! { |tool| always.include?(trigger_tool_name(tool)) }
+          def subtract_always_loaded(matched)
+            always = registry_tool_snapshot[:always_names]
+            matched.subtract(always)
             log_step_debug(:trigger_match, :always_loaded_filtered, always_loaded_count: always.size, remaining_count: matched.size)
           end
 

@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
+RSpec.describe Legion::LLM::Inference::Steps::StickyPersist, tool_registry: true do
   let(:klass) do
     Class.new do
       include Legion::LLM::Inference::Steps::StickyPersist
@@ -39,14 +40,8 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
   end
 
   before do
-    extensions_mod = Module.new do
-      define_singleton_method(:tools) { [] }
-    end
-    stub_const('Legion::Settings::Extensions', extensions_mod) unless defined?(Legion::Settings::Extensions)
-
     allow(Legion::LLM::Inference::Conversation).to receive(:read_sticky_state).and_return({})
     allow(Legion::LLM::Inference::Conversation).to receive(:write_sticky_state)
-    allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
   end
 
   describe '#step_sticky_persist' do
@@ -189,7 +184,7 @@ RSpec.describe Legion::LLM::Inference::Steps::StickyPersist do
 
     it 'resolves tool entry via Settings::Extensions snapshot when @injected_tool_map misses' do
       tc = deferred_tool_entry('legion-github-issues-list_issues', 'github', 'issues')
-      allow(Legion::Settings::Extensions).to receive(:tools).and_return([tc])
+      register_tool_entries([tc])
       instance.pending_tool_history << {
         tool_name: 'legion-github-issues-list_issues', result: '{}', error: false, runner_key: nil
       }

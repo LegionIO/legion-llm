@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'legion/llm/inference/registry_tools'
+
 module Legion
   module LLM
     module Inference
@@ -10,6 +12,8 @@ module Legion
         # per-tier injection limits. Memoized via @native_dispatch_tools / @native_tool_definitions
         # — those memos are invalidated implicitly by Executor lifecycle (one Executor per request).
         module ToolInjection
+          include Legion::LLM::Inference::RegistryTools
+
           def native_dispatch_options
             injected_system = if @native_tool_loop_round.to_i.positive?
                                 @cached_injected_system
@@ -338,7 +342,7 @@ module Legion
             inject_limit = registry_tool_limit
             registry_added = 0
 
-            always_entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+            always_entries = registry_tool_snapshot[:always_loaded]
             gaia_entries = gaia_advisory_tool_entries
             triggered_entries = @triggered_tools.any? ? Array(@triggered_tools) : []
             prioritized = if local_provider?
@@ -373,7 +377,7 @@ module Legion
             requested = requested_deferred_tool_names
             return if requested.empty?
 
-            deferred_entries = Legion::Settings::Extensions.filter_tools(deferred: true)
+            deferred_entries = registry_tool_snapshot[:deferred]
             deferred_entries.each do |entry|
               definition = Types::ToolDefinition.from_registry_entry(entry)
               next unless requested.include?(definition.name)

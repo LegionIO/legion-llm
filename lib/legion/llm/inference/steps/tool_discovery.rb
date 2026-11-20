@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 
 module Legion
@@ -9,6 +10,7 @@ module Legion
       module Steps
         module ToolDiscovery
           include Legion::Logging::Helper
+          include Legion::LLM::Inference::RegistryTools
           include Steps::Logging
 
           def step_tool_discovery
@@ -43,12 +45,7 @@ module Legion
           private
 
           def discover_registry_tools
-            unless Legion::Settings::Extensions.respond_to?(:tool_count) &&
-                   Legion::Settings::Extensions.respond_to?(:filter_tools)
-              log_step_debug(:tool_discovery, :registry_skipped, reason: :settings_extensions_unavailable)
-              return
-            end
-            total_registered = Legion::Settings::Extensions.tool_count
+            total_registered = registry_tool_snapshot[:entries].size
             unless total_registered.positive?
               log_step_debug(:tool_discovery, :registry_skipped, reason: :no_registered_tools)
               return
@@ -62,7 +59,7 @@ module Legion
           end
 
           def discover_settings_extensions_tools
-            entries = Legion::Settings::Extensions.filter_tools(deferred: false)
+            entries = registry_tool_snapshot[:always_loaded]
             log_step_debug(:tool_discovery, :registry_scan, candidate_count: entries.size)
             entries.each do |entry|
               @discovered_tools << {
@@ -76,7 +73,7 @@ module Legion
             log.info do
               "[llm][tools] discover request_id=#{@request.id} " \
                 "settings_extensions_always=#{entries.size} " \
-                "settings_extensions_total=#{Legion::Settings::Extensions.tool_count}"
+                "settings_extensions_total=#{registry_tool_snapshot[:entries].size}"
             end
           end
 

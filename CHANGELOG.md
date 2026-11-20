@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.34] - 2026-11-19
+
+### Fixed
+- Reuse one framework tool-registry snapshot per inference request across discovery, trigger matching, sticky state, GAIA hints, and tool injection. Reuse the framework's deferred filters and index matches by tool name, avoiding repeated entry copies, schema hashing, and linear always-loaded membership scans. Preserve tool ordering, caps, metadata, and execution ownership; new requests observe registry updates while live inventory tools and execution-time lookups remain live. Replace affected registry doubles with real registered fixtures and cover all three client formats in synchronous and streaming execution. Fixes #221.
+
 ## [0.16.33] - 2026-11-19
 
 ### Fixed

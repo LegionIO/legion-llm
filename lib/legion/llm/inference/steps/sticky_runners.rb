@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 
 module Legion
@@ -8,6 +9,7 @@ module Legion
     module Inference
       module Steps
         module StickyRunners
+          include Legion::LLM::Inference::RegistryTools
           include Legion::Logging::Helper
           include Steps::Logging
           include Steps::StickyHelpers
@@ -41,17 +43,13 @@ module Legion
                 (v[:tier] == :executed && deferred_count < v[:expires_after_deferred_call])
             end.keys
 
-            if Legion::Settings::Extensions.respond_to?(:filter_tools)
-              Legion::Settings::Extensions.filter_tools(deferred: true).each do |entry|
-                key = "#{entry[:extension]}_#{entry[:runner]}"
-                next unless live_keys.include?(key)
-                next if entry[:sticky] == false
-                next if @triggered_tools.any? { |t| t.is_a?(Hash) ? t[:name] == entry[:name] : t.tool_name == entry[:name] }
+            registry_tool_snapshot[:deferred].each do |entry|
+              key = "#{entry[:extension]}_#{entry[:runner]}"
+              next unless live_keys.include?(key)
+              next if entry[:sticky] == false
+              next if @triggered_tools.any? { |t| t.is_a?(Hash) ? t[:name] == entry[:name] : t.tool_name == entry[:name] }
 
-                @triggered_tools << entry
-              end
-            else
-              log_step_debug(:sticky_runners, :tool_filter_skipped, reason: :settings_extensions_unavailable)
+              @triggered_tools << entry
             end
 
             @enrichments['tool:sticky_runners'] = {

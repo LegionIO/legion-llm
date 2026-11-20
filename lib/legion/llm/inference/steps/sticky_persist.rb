@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 
 module Legion
@@ -8,6 +9,7 @@ module Legion
     module Inference
       module Steps
         module StickyPersist
+          include Legion::LLM::Inference::RegistryTools
           include Legion::Logging::Helper
           include Steps::Logging
           include Steps::StickyHelpers
@@ -25,14 +27,7 @@ module Legion
             runners        = (state[:sticky_runners] || {}).dup
             deferred_count = state[:deferred_tool_calls] || 0
 
-            # Single Settings::Extensions snapshot for all lookups
-            tool_snapshot = if Legion::Settings::Extensions.respond_to?(:tools)
-                              Array(Legion::Settings::Extensions.tools)
-                                .select { |t| t.is_a?(Hash) && t[:name] }
-                                .to_h { |t| [t[:name], t] }
-                            else
-                              {}
-                            end
+            tool_snapshot = registry_tool_snapshot[:by_name]
 
             pending_snapshot = @pending_tool_history.dup # Concurrent::Array#dup is thread-safe
             completed        = pending_snapshot.select { |e| e[:result] && !e[:error] }
