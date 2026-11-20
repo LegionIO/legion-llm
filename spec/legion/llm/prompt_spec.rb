@@ -21,8 +21,6 @@ RSpec.describe Legion::LLM::Prompt do
   end
 
   before do
-    Legion::Settings.reset!
-    Legion::Settings.merge_settings('llm', Legion::LLM::Settings.default)
     Legion::Settings[:llm][:default_provider] = :anthropic
     Legion::Settings[:llm][:default_model] = 'claude-sonnet-4-6'
     Legion::Settings[:llm][:pipeline_enabled] = true

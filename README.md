@@ -34,8 +34,6 @@
 > branching outside the translators. A Claude Code session can be served by an OpenAI Responses
 > backend — or the reverse — and never know the difference.
 
-Tool discovery and selection reuse framework registry views within each inference request. MCP client discovery invalidates the view because it can publish new or updated tools, even before reporting a discovery failure. Native injection then reads a fresh view on the same request. New requests also read fresh registry state. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
-
 ### Highlights
 
 - 🔀 **N × N any-to-any.** N client formats × N providers, in every direction, through one canonical core.
@@ -468,6 +466,8 @@ framework savings without charging for another provider execution. Missing
 provider usage remains zero; embedding dimensions are not counted as output tokens.
 
 ### Tool Use
+
+Tool discovery and selection reuse framework registry views within each inference request. MCP client discovery invalidates the view because it can publish new or updated tools, even before reporting a discovery failure. Native injection then reads a fresh view on the same request. New requests also read fresh registry state. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
 
 Define tools as native tool definitions or registered Legion tool classes. The inference executor forwards tool definitions to native providers and dispatches tool calls through `Inference::ToolDispatcher`:
 
