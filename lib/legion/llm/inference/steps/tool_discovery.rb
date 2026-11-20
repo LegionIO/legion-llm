@@ -93,7 +93,14 @@ module Legion
               return
             end
 
-            tools = ::Legion::MCP::Client::Pool.all_tools
+            tools = begin
+              ::Legion::MCP::Client::Pool.all_tools
+            ensure
+              # The pool can publish entries before a later discovery failure,
+              # including failures it handles by returning an empty list.
+              # Native injection must read the authoritative registry again.
+              @registry_tool_snapshot = nil
+            end
             log_step_debug(:tool_discovery, :client_scan, candidate_count: tools.size)
             tools.each do |tool|
               @discovered_tools << {

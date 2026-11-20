@@ -32,12 +32,12 @@ RSpec.describe Legion::LLM::Inference::Executor, 'request-owned tool registry re
 
   after { registry.reset! }
 
-  it 'shares one registry read across discovery, trigger, sticky, GAIA and injection steps' do
+  it 'shares one registry read across consumers between client discovery boundaries' do
     allow(registry).to receive(:tools).and_call_original
     allow(registry).to receive(:filter_tools).and_call_original
     executor.send(:step_trigger_match)
     executor.send(:step_sticky_runners)
-    executor.send(:step_tool_discovery)
+    executor.send(:discover_registry_tools)
     definitions = executor.send(:native_tool_definitions)
     executor.send(:step_sticky_persist)
     expect(definitions.map(&:name)).to include('probe_always', 'probe_zeta', 'probe_alpha', 'probe_beta', 'probe_hint', 'probe_requested')
@@ -66,6 +66,7 @@ RSpec.describe Legion::LLM::Inference::Executor, 'request-owned tool registry re
 
   it 'preserves an in-flight view and observes registrations, replacements and removals on the next request' do
     executor.send(:step_tool_discovery)
+    executor.send(:step_trigger_match)
     registry.unregister_tool('probe_always')
     register('probe_new', deferred: false)
     register('probe_alpha', trigger_words: ['quartz'], description: 'replacement definition')

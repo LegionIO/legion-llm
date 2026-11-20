@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require_relative 'matrix_helper'
+require 'legion/mcp/client'
 
-RSpec.describe '[matrix] one registry view per request', type: :request do
+RSpec.describe '[matrix] registry views around client discovery', type: :request do
   include Rack::Test::Methods
 
   let(:app) { MatrixHelper.app_class }
@@ -11,6 +12,7 @@ RSpec.describe '[matrix] one registry view per request', type: :request do
     MatrixHelper.configure_for_fake!
     Legion::Settings::Extensions.reset!
     Legion::Settings[:llm][:rag][:enabled] = false
+    allow(Legion::MCP::Client::ServerRegistry).to receive(:healthy_servers).and_return({})
     [
       ['probe_zeta', true, ['quartz']],
       ['probe_always', false, []],
@@ -36,7 +38,7 @@ RSpec.describe '[matrix] one registry view per request', type: :request do
 
   %i[chat responses messages].each do |dialect|
     [false, true].each do |streaming|
-      it "preserves tool definitions and ownership through #{dialect}, stream=#{streaming}, with one registry read" do
+      it "preserves tool definitions and ownership through #{dialect}, stream=#{streaming}, with two shared registry reads" do
         allow(Legion::Settings::Extensions).to receive(:tools).and_call_original
         allow(Legion::Settings::Extensions).to receive(:filter_tools).and_call_original
         body = { model: 'fake-default', stream: streaming }
@@ -60,7 +62,7 @@ RSpec.describe '[matrix] one registry view per request', type: :request do
         expect(tools.map(&:name)).to eq(%w[probe_always probe_hint probe_zeta probe_alpha])
         expect(tools).to all(be_a(Legion::Extensions::Llm::Canonical::ToolDefinition))
         expect(tools.map(&:source)).to all(include(type: :extension, extension: 'probe', runner: 'jobs', function: 'inspect'))
-        expect(Legion::Settings::Extensions).to have_received(:tools).once
+        expect(Legion::Settings::Extensions).to have_received(:tools).twice
         expect(Legion::Settings::Extensions).not_to have_received(:filter_tools)
       end
     end

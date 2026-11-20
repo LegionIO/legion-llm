@@ -34,7 +34,7 @@
 > branching outside the translators. A Claude Code session can be served by an OpenAI Responses
 > backend — or the reverse — and never know the difference.
 
-Tool discovery and selection share one framework registry snapshot within each inference request. Registrations, replacements, and removals are visible to the next request. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
+Tool discovery and selection reuse framework registry views within each inference request. MCP client discovery invalidates the view because it can publish new or updated tools, even before reporting a discovery failure. Native injection then reads a fresh view on the same request. New requests also read fresh registry state. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
 
 ### Highlights
 

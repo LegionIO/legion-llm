@@ -12,8 +12,9 @@ module Legion
         private
 
         # A request-local view of the framework-owned registry, shared by the
-        # executor's steps. New requests read fresh entries. Nested metadata is
-        # owned by the registry and must not be mutated or frozen here.
+        # executor's steps. New requests read fresh entries; MCP discovery
+        # invalidates the view because it can publish tools even on failure. Nested
+        # metadata is owned by the registry and must not be mutated or frozen here.
         def registry_tool_snapshot
           @registry_tool_snapshot ||= begin
             entries = Legion::Settings::Extensions.tools
