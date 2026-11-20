@@ -93,7 +93,7 @@ module Legion
                   rescue StandardError => e
                     handle_exception(e, level: :error, handled: false,
                                         operation: 'llm.api.namespaces.openai.responses.stream', request_id: request_id)
-                    out << "event: error\ndata: #{Legion::JSON.dump({ type: 'server_error', message: e.message })}\n\n"
+                    out << Legion::LLM::API::ClientTranslators::OpenAIResponses.format_sse_event(event: 'error', payload: { type: 'server_error', message: e.message })
                   end
                 else
                   # N×N: Canonical path — responses body is already translated

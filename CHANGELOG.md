@@ -1,5 +1,20 @@
 # Legion LLM Changelog
 
+## [0.16.33] - 2026-11-19
+
+### Fixed
+- Retain complete conversation history when Apollo archival fails or returns a malformed, unknown, or async-only acknowledgment. Accept confirmed local/direct persistence and existing-content deduplication; mixed facade results must contain a confirmed persisted child. Apply the same check to all archive paths and log unconfirmed outcomes without archive content. Add real SQLite failure/persistence coverage and all three client formats in synchronous and streaming execution. Fixes #192.
+
+## [0.16.32] - 2026-11-19
+
+### Fixed
+- Normalize Apollo RAG result envelopes, deduplicate general and conversation-history facts, and enforce one combined strategy limit, including smaller GAIA context limits. Preserve retrieval order and metadata; filter excluded sources before deduplication and limiting. Empty fallbacks no longer raise, failed retrievals cannot inject stale entries, and skipped history lookups do not manufacture successful retrievals. Cover actual provider-bound canonical messages across all three client formats in synchronous and streaming execution. Fixes #195.
+
+## [0.16.31] - 2026-11-19
+
+### Fixed
+- Serialize Responses SSE payloads with lossless JSON Unicode escapes so clients can record raw HTTP byte buffers without ASCII-8BIT-to-UTF-8 errors. Preserve complete MCP arguments/results, following assistant text, and streaming errors through the current and legacy Responses renderers. Add in-process regressions for real MCP execution, buffered/unbuffered streaming, emoji, combining characters, and literal escape sequences. Refs #224.
+
 ## [0.16.30] - 2026-11-19
 
 ### Fixed

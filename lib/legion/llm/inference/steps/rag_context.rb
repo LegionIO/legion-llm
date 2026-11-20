@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/content_hash'
 require_relative 'logging'
 
 module Legion
@@ -195,8 +196,7 @@ module Legion
 
             general = apollo_retrieve_general(query: query, limit: limit, confidence: confidence)
             history = apollo_retrieve_conversation_history(query: query, limit: limit, confidence: confidence)
-            result = merge_apollo_results(general, history)
-            filter_excluded_source_agents(result)
+            merge_apollo_results(general, history, limit: limit)
           end
 
           def filter_excluded_source_agents(result)
@@ -204,7 +204,7 @@ module Legion
             return result if excluded.empty?
 
             entries = Array(result[:entries])
-            filtered = entries.reject { |e| excluded.include?(e[:source_agent].to_s) }
+            filtered = entries.reject { |e| excluded.include?((e[:source_agent] || e['source_agent']).to_s) }
             if filtered.size < entries.size
               log.debug(
                 "[llm][steps][rag_context] action=source_agent_filter excluded=#{entries.size - filtered.size} " \
@@ -237,10 +237,10 @@ module Legion
           end
 
           def apollo_retrieve_conversation_history(query:, limit:, confidence:)
-            return empty_apollo_result unless conversation_history_retrieval_enabled?
+            return nil unless conversation_history_retrieval_enabled?
 
             conversation_id = @request.conversation_id
-            return empty_apollo_result if conversation_id.to_s.empty?
+            return nil if conversation_id.to_s.empty?
 
             tags = ['llm_conversation_history', "conversation:#{conversation_id}"]
             log_step_debug(:rag_context, :apollo_history_query, limit: limit, tag_count: tags.size)
@@ -260,40 +260,67 @@ module Legion
                 tags:   tags,
                 domain: 'conversation_history'
               )
-            else
-              empty_apollo_result
             end
           rescue StandardError => e
             handle_exception(e, level: :warn, operation: 'llm.pipeline.steps.rag_context.apollo_history_retrieve',
                                 conversation_id: conversation_id)
-            empty_apollo_result
+            nil
           end
 
           def conversation_history_retrieval_enabled?
             Legion::Settings[:llm][:rag][:conversation_history_enabled] == true
           end
 
-          def merge_apollo_results(*results)
-            entries = results.flat_map { |result| apollo_result_entries(result) }
-            {
-              success: entries.any? || results.any? { |result| result[:success] },
-              entries: entries,
-              count:   entries.size
-            }
+          def merge_apollo_results(*results, limit:)
+            normalized = results.map { |result| normalize_apollo_result(result) }
+            entries = normalized.flat_map { |result| result[:entries] }
+            result = filter_excluded_source_agents({
+                                                     success: normalized.any? { |retrieval| retrieval[:success] },
+                                                     entries: entries,
+                                                     count:   entries.size
+                                                   })
+
+            # Preserve retrieval order. Excluded sources cannot consume the
+            # shared budget or hide an allowed copy of the same fact.
+            seen = Set.new
+            entries = result[:entries].reject do |entry|
+              identity = apollo_entry_identity(entry)
+              identity && !seen.add?(identity)
+            end.first(limit)
+            result.merge(entries: entries, count: entries.size)
           end
 
-          def apollo_result_entries(result)
-            return [] if result.nil?
-
-            if result.respond_to?(:key?)
-              Array(result[:entries] || [])
+          def normalize_apollo_result(result)
+            case result
+            when Hash
+              entries = result[:success] == false ? [] : (result[:entries] || [])
+              success = result[:success] == true
+            when Array
+              entries = result
+              success = false
+            when nil
+              entries = []
+              success = false
             else
-              Array(result)
+              raise ArgumentError, 'Apollo retrieval must return a Hash, Array or nil'
             end
+            raise ArgumentError, 'Apollo retrieval entries must be an Array of Hashes' unless entries.is_a?(Array) && entries.all?(Hash)
+
+            # Empty arrays/nil are fallback results, not evidence of a successful
+            # retrieval. An explicit success envelope can represent zero hits.
+            { success: success || entries.any?, entries: entries }
           end
 
-          def empty_apollo_result
-            { success: true, entries: [], count: 0 }
+          def apollo_entry_identity(entry)
+            fields = entry.transform_keys(&:to_sym)
+            content_hash = fields[:content_hash]
+            return [:content_hash, content_hash] unless content_hash.to_s.empty?
+
+            id = fields[:id]
+            return [:source_id, fields[:source].to_s, id] unless id.to_s.empty?
+
+            digest = Legion::LLM::ContentHash.call(fields[:content])
+            [:content, fields[:content_type].to_s, digest] if digest
           end
 
           # G3: pipeline messages are Canonical::Message — the query is the

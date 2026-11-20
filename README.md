@@ -99,6 +99,8 @@ Curation runs **after** each turn (async), never inside the tool loop, so it nev
 
 `drop_and_archive` is the strategy that makes curation more than a bigger trash can: instead of discarding overflow context, it sends it to the Apollo knowledge store, where it stays retrievable on future turns. Client-side compaction is lossy truncation — once it's gone, it's gone. This is archival: a fact from turn 3 can resurface at turn 300.
 
+History is removed only after confirmed persistence, including a confirmed existing-content duplicate. Failed, malformed, unknown, or async-only acknowledgments retain the history for a later attempt. A mixed-backend response must contain a confirmed persisted result; publishing an archive request alone is insufficient.
+
 Apollo is two stores. The local per-node store ([legion-apollo](https://github.com/LegionIO/legion-apollo)) starts knowledge at confidence 0.5, corroborates at +0.15, decays at 0.005 per pass, and archives below 0.1 ([confidence.rb](https://github.com/LegionIO/legion-apollo/blob/main/lib/legion/apollo/helpers/confidence.rb)). The shared cross-node store ([lex-apollo](https://github.com/LegionIO/lex-apollo)) corroborates at +0.3 — only when a ≥0.9-cosine match arrives from a *different* provider — and begins time decay after 168 hours. The pipeline steps here use the local store (`Legion::Apollo::Local`).
 
 Lifecycle status in the local store moves through `pending` → `confirmed` / `disputed` → `deprecated` / `archived`. The shared store is backed by PostgreSQL+pgvector (`lib/legion/extensions/apollo.rb`).
@@ -108,6 +110,8 @@ The loop closes back up in the Inference pipeline, across three steps:
 - `knowledge_capture` (`lib/legion/llm/inference/steps/knowledge_capture.rb`) evaluates the response after each turn and writes new knowledge back to Apollo.
 - `rag_context` (`lib/legion/llm/inference/steps/rag_context.rb`) queries Apollo — via the shared-store runner when available, falling back to `Legion::Apollo.retrieve(scope: :all)`, which merges local and shared results — and injects relevant knowledge into the request before it goes out.
 - `gaia_advisory` (`lib/legion/llm/inference/steps/gaia_advisory.rb`) queries `Legion::Apollo::Local` — the local store only — for advisory context: tone, partner history, routing hints. GAIA advises; it doesn't inject prompts. The pipeline is what pulls context in.
+
+RAG merges general and conversation-history results in retrieval order, removes excluded sources and duplicate facts, then applies one combined `llm.rag.full_limit` or `compact_limit`. A smaller GAIA context limit takes precedence. Duplicate identity uses a content hash when available, then a source-scoped entry ID, then content type and text. Failed retrievals contribute no entries; an explicit successful empty response remains distinct from an unavailable or skipped retrieval.
 
 The receipts for this loop aren't a separate claim: RAG-injected tokens are a recorded column in the lex-llm-ledger aggregates already published in [docs/curation-production-metrics.md](docs/curation-production-metrics.md).
 

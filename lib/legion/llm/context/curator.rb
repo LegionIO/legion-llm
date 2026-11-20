@@ -406,49 +406,77 @@ module Legion
           payload = archived_history_payload(messages, conversation_id: conversation_id)
           return false if payload[:content].empty?
 
-          if defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
-            ::Legion::Apollo::Local.ingest(
-              content:        payload[:content],
-              tags:           payload[:tags],
-              source_channel: 'llm_context_curator',
-              confidence:     0.75,
-              metadata:       payload[:metadata]
-            )
-            return true
-          end
+          result = if defined?(::Legion::Apollo::Local) && ::Legion::Apollo::Local.started?
+                     ::Legion::Apollo::Local.ingest(
+                       content:        payload[:content],
+                       tags:           payload[:tags],
+                       source_channel: 'llm_context_curator',
+                       confidence:     0.75,
+                       metadata:       payload[:metadata]
+                     )
+                   elsif defined?(::Legion::Apollo) && ::Legion::Apollo.respond_to?(:ingest)
+                     ::Legion::Apollo.ingest(
+                       content:          payload[:content],
+                       content_type:     'conversation_turn',
+                       tags:             payload[:tags],
+                       source_channel:   'llm_context_curator',
+                       knowledge_domain: 'conversation_history',
+                       context:          payload[:metadata]
+                     )
+                   elsif defined?(::Legion::Extensions::Apollo::Runners::Knowledge) &&
+                         ::Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
+                     ::Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
+                       content:          payload[:content],
+                       content_type:     'conversation_turn',
+                       tags:             payload[:tags],
+                       source_agent:     'legion-llm',
+                       source_channel:   'llm_context_curator',
+                       knowledge_domain: 'conversation_history',
+                       context:          payload[:metadata]
+                     )
+                   else
+                     log.debug("[llm][context_curator] action=drop_and_archive.skipped reason=apollo_unavailable conversation_id=#{conversation_id}")
+                     return false
+                   end
 
-          if defined?(::Legion::Apollo) && ::Legion::Apollo.respond_to?(:ingest)
-            ::Legion::Apollo.ingest(
-              content:          payload[:content],
-              content_type:     'conversation_turn',
-              tags:             payload[:tags],
-              source_channel:   'llm_context_curator',
-              knowledge_domain: 'conversation_history',
-              context:          payload[:metadata]
-            )
-            return true
-          end
+          return true if archive_persisted?(result)
 
-          if defined?(::Legion::Extensions::Apollo::Runners::Knowledge) &&
-             ::Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
-            result = ::Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(
-              content:          payload[:content],
-              content_type:     'conversation_turn',
-              tags:             payload[:tags],
-              source_agent:     'legion-llm',
-              source_channel:   'llm_context_curator',
-              knowledge_domain: 'conversation_history',
-              context:          payload[:metadata]
-            )
-            return result.nil? || !result.respond_to?(:key?) || result[:success] != false
-          end
-
-          log.debug("[llm][context_curator] action=drop_and_archive.skipped reason=apollo_unavailable conversation_id=#{conversation_id}")
+          log.warn("[llm][context_curator] action=archive_unconfirmed conversation_id=#{conversation_id} " \
+                   "result_type=#{result.class} policy=retain_history")
           false
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'llm.context_curator.archive_conversation_history',
                               conversation_id: conversation_id)
           false
+        end
+
+        def archive_persisted?(result)
+          return false unless result.is_a?(Hash) && result[:success] == true && result[:error].nil?
+          return persisted_archive_entry?(result) unless [:all, 'all'].include?(result[:mode])
+
+          # Facade success can mean only that an async publication succeeded.
+          # Its documented children are individual local/direct/async outcomes.
+          results = result[:results]
+          results.is_a?(Array) && results.any? { |entry| persisted_archive_entry?(entry) }
+        end
+
+        def persisted_archive_entry?(result)
+          return false unless result.is_a?(Hash) && result[:success] == true && result[:error].nil?
+
+          case result[:mode]
+          when :local, 'local'
+            archive_entry_id?(result[:id])
+          when :deduplicated, 'deduplicated'
+            true # Local dedup confirms existing persistence without returning an ID.
+          when nil
+            archive_entry_id?(result[:entry_id]) # Knowledge.handle_ingest, including facade direct ingestion.
+          else
+            false
+          end
+        end
+
+        def archive_entry_id?(id)
+          (id.is_a?(Integer) && id.positive?) || (id.is_a?(String) && !id.strip.empty?)
         end
 
         def archived_history_payload(messages, conversation_id:)

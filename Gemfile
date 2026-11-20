@@ -11,6 +11,11 @@ legion_mcp_path = File.expand_path('../legion-mcp', __dir__)
 gem 'legion-mcp', path: legion_mcp_path if Dir.exist?(legion_mcp_path)
 
 group :test do
+  # Archive regressions use the published Apollo implementation and an isolated SQLite store.
+  gem 'legion-apollo', '>= 0.5.13', require: false
+  gem 'sequel'
+  gem 'sqlite3', '>= 2.0'
+
   # Immutable CI companions and adjacent development checkouts both consume the
   # shared contract directly. Standalone installs use the gemspec dependency.
   lex_llm_path = File.expand_path('.ci-dependencies/lex-llm', __dir__)
