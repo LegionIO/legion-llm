@@ -2,6 +2,6 @@
 
 module Legion
   module LLM
-    VERSION = '0.16.34'
+    VERSION = '0.16.35'
   end
 end

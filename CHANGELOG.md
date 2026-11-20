@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.35] - 2026-11-20
+
+### Fixed
+- Render the selected embedding model in `/v1/embeddings` responses and prompt audit events, matching routing headers for single inputs and batches. Consume the canonical embedding result artifact instead of echoing an auto-routing alias or accepting bare vectors without attribution. Add route-level regressions covering model identity across the response body, headers, and audit.
+
 ## [0.16.34] - 2026-11-19
 
 ### Fixed

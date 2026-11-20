@@ -453,6 +453,10 @@ matches. Instances share a space only when they publish matching revision
 evidence; unknown revisions remain isolated by instance. Persist this provenance
 with vectors and compare only compatible spaces.
 
+The `/v1/embeddings` response body, routing headers, and prompt audit identify the
+selected model that generated the vectors. An incoming auto-routing alias such as
+`legionio` does not replace that model attribution, for either single inputs or batches.
+
 The embedding path validates every vector and chunk before returning a result.
 Malformed output is retried through the existing Router policy rather than
 silently dropping chunks. Legacy cache entries without provenance and entries
