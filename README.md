@@ -1178,7 +1178,7 @@ bundle exec rubocop -A
 | `legion-settings` | Configuration defaults and file overrides |
 | `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
+| `lex-llm` (>= 0.8.10) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, canonical fleet controls, and streaming terminal preservation |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 
