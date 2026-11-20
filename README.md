@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.35-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.36-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -218,6 +218,15 @@ Each lane decision reads one immutable live Inventory snapshot; filters compare
 the Router's request facts with published evidence, ranking consumes stored weights,
 and dispatch preserves the resulting exact Selection. Retries retain the same
 Router, immutable facts and request-local attempt state.
+
+The client or configured output allowance remains the request's context reservation.
+Before each provider call, canonical dispatch caps that allowance to the selected
+lane's native maximum output when Inventory has known evidence. Unknown limits
+leave the allowance unchanged. Retries and tool continuations derive the cap anew
+from the original request and their selected lane; direct and fleet calls receive
+the same effective canonical Params. The execution timeline records requested and
+effective limits, evidence source, and attempt identity. Exhausting the effective
+output limit still produces a token-limit stop, including `incomplete` Responses.
 
 Fleet serialization preserves canonical media source enums through the shared
 rehydration boundary. Signed binding/media tampering and Inventory mismatches

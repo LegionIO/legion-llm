@@ -18,6 +18,12 @@ RSpec.describe '[matrix] Responses terminal status', type: :request do
   }.each do |stop_reason, (status, details)|
     [false, true].each do |stream|
       it "preserves #{stop_reason} in the response and message status, stream=#{stream}" do
+        dispatched_limits = []
+        operation = stream ? :stream_chat : :chat
+        allow(FakeProvider.adapter).to receive(operation).and_wrap_original do |original, messages, **options, &consumer|
+          dispatched_limits << options.fetch(:params).max_tokens
+          original.call(messages, **options, &consumer)
+        end
         allow(FakeProvider::Fixtures).to receive(:text_response).and_wrap_original do |original, model|
           original.call(model).with(stop_reason: stop_reason)
         end
@@ -29,11 +35,13 @@ RSpec.describe '[matrix] Responses terminal status', type: :request do
 
         FakeProvider.with_scenario(stream ? :stream_text : :text) do
           post '/v1/responses', Legion::JSON.dump(model: MatrixHelper::FAKE_MODEL, stream: stream,
-                                                  max_output_tokens: 50, input: 'Say hello in exactly 3 words.'),
+                                                  max_output_tokens: stop_reason == :max_tokens ? 64_000 : 50,
+                                                  input: 'Say hello in exactly 3 words.'),
                'CONTENT_TYPE' => 'application/json'
         end
 
         expect(last_response.status).to eq(200)
+        expect(dispatched_limits).to eq([stop_reason == :max_tokens ? 16_384 : 50])
         if stream
           events = MatrixHelper.parse_sse(last_response.body)
           terminal_events = events.select { |event| %w[response.completed response.incomplete response.failed].include?(event.first) }

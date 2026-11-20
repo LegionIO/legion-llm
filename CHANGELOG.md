@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.36] - 2026-11-20
+
+### Fixed
+- Bound each canonical provider dispatch by the selected lane's published native output ceiling when known, while preserving the original client/configured allowance and Router context reservation. Recompute the effective ceiling for every retry and tool round, carry it unchanged through direct and signed fleet execution, and record requested/effective limits with their Inventory evidence and attempt identity in the execution timeline. Unknown evidence preserves the requested allowance; token-limited responses remain incomplete.
+
 ## [0.16.35] - 2026-11-20
 
 ### Fixed
