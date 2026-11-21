@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 
 module Legion
@@ -8,6 +9,7 @@ module Legion
     module Inference
       module Steps
         module ToolCalls
+          include Legion::LLM::Inference::RegistryTools
           include Legion::Logging::Helper
           include Steps::Logging
 
@@ -292,13 +294,7 @@ module Legion
           end
 
           def registry_tool_sources_available?
-            unless Legion::Settings::Extensions.respond_to?(:tools) &&
-                   Legion::Settings::Extensions.respond_to?(:filter_tools)
-              log_tool_injection_skip(:settings_extensions_unavailable)
-              return false
-            end
-
-            settings_tool_count = Array(Legion::Settings::Extensions.tools).size
+            settings_tool_count = registry_tool_snapshot[:entries].size
             if settings_tool_count.zero? && @triggered_tools.empty?
               log_tool_injection_skip(:no_settings_or_triggered_tools, settings_tool_count: settings_tool_count)
               return false

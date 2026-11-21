@@ -1,12 +1,14 @@
 # frozen_string_literal: true
 
 require 'legion/logging/helper'
+require 'legion/llm/inference/registry_tools'
 require_relative 'logging'
 module Legion
   module LLM
     module Inference
       module Steps
         module GaiaAdvisory
+          include Legion::LLM::Inference::RegistryTools
           include Legion::Logging::Helper
           include Steps::Logging
 
@@ -245,10 +247,8 @@ module Legion
           def gaia_advisory_tool_entries
             hint_names = gaia_tool_hint_names
             return [] if hint_names.empty?
-            return [] unless Legion::Settings::Extensions.respond_to?(:filter_tools)
 
-            entries = Legion::Settings::Extensions.filter_tools(deferred: false) +
-                      Legion::Settings::Extensions.filter_tools(deferred: true)
+            entries = registry_tool_snapshot[:always_loaded] + registry_tool_snapshot[:deferred]
             entries.each_with_object([]) do |entry, selected|
               name = normalized_tool_name(registry_entry_name(entry))
               next unless hint_names.include?(name)

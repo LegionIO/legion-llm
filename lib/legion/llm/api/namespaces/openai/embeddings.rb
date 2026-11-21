@@ -39,37 +39,29 @@ module Legion
                   log.info("[llm][api][namespaces][openai][embeddings] action=accepted model=#{model} input_length=#{input.to_s.length}")
                 end
 
-                entries = embed_results.map do |result|
-                  vector = if result.is_a?(Hash)
-                             result[:vector] || result['vector'] ||
-                               result[:embedding] || result['embedding']
-                           else
-                             result
-                           end
-                  {
-                    vector: vector.is_a?(Array) ? vector : [],
-                    tokens: result.is_a?(Hash) ? (result[:tokens] || result['tokens']) : nil
-                  }
-                end
+                # Call::Embeddings owns the selected identity for every result,
+                # including cache hits and batches. The incoming name may be an
+                # auto-routing alias and must not replace that attribution.
+                first_result = embed_results.first
+                selected_model = first_result.fetch(:model)
+                entries = embed_results.map { |result| { vector: result.fetch(:vector), tokens: result[:tokens] } }
 
                 response_body = Legion::LLM::API::Translators::OpenAIResponse.format_embeddings(
-                  entries, model: model, input_texts: input, encoding_format: encoding_format
+                  entries, model: selected_model, input_texts: input, encoding_format: encoding_format
                 )
 
                 # The embed result hash carries the selected lane's attribution
                 # (provider/instance/model) at the top level — flat-hash path.
                 # Every batch entry shares the one selected lane, so entry 0
                 # attributes the whole response.
-                first_result = embed_results.first
-                set_routing_response_headers(routing: first_result) if first_result.is_a?(Hash)
+                set_routing_response_headers(routing: first_result)
 
-                log.info("[llm][api][namespaces][openai][embeddings] action=complete model=#{model} entries=#{entries.size} dims=#{entries.first[:vector].size}")
+                log.info("[llm][api][namespaces][openai][embeddings] action=complete model=#{selected_model} entries=#{entries.size} dims=#{entries.first[:vector].size}")
 
-                audit_provider = first_result.is_a?(Hash) ? first_result[:provider].to_s : ''
                 Legion::LLM::Audit.emit_prompt(
                   request_id:   SecureRandom.uuid,
                   caller:       build_server_caller(source: 'openai_embeddings', path: request.path, env: env),
-                  routing:      { model: model, provider: audit_provider.empty? ? 'embed' : audit_provider },
+                  routing:      { model: selected_model, provider: first_result.fetch(:provider).to_s },
                   tokens:       { input_tokens: response_body.dig(:usage, :prompt_tokens), output_tokens: 0 },
                   request_type: 'embedding',
                   timestamp:    Time.now

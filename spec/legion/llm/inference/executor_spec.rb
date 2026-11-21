@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Executor do
+RSpec.describe Legion::LLM::Inference::Executor, tool_registry: true do
   before do
     Legion::Settings[:llm][:routing] ||= {}
     Legion::Settings[:llm][:routing][:escalation] ||= {}
@@ -242,19 +243,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
             input_schema: { type: 'object', properties: {} }, deferred: true }
         ]
         all_entries = always_entries + deferred_entries
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { all_entries }
-          define_singleton_method(:filter_tools) do |**criteria|
-            if criteria[:deferred] == false
-              always_entries
-            elsif criteria[:deferred] == true
-              deferred_entries
-            else
-              all_entries
-            end
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries(all_entries)
 
         req = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'test' }],
@@ -276,19 +265,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
             input_schema: { type: 'object', properties: {} }, deferred: true }
         ]
         all_entries = always_entries + deferred_entries
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { all_entries }
-          define_singleton_method(:filter_tools) do |**criteria|
-            if criteria[:deferred] == false
-              always_entries
-            elsif criteria[:deferred] == true
-              deferred_entries
-            else
-              all_entries
-            end
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries(all_entries)
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
         executor = described_class.new(req)
@@ -323,13 +300,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
             input_schema: { type: 'object', properties: {} }, deferred: false }
         end
         all_entries = always_entries
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { all_entries }
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? all_entries : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries(all_entries)
         Legion::LLM.settings[:tools][:trigger][:local_tool_limit] = 2
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
@@ -343,7 +314,6 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'prioritizes GAIA hinted tools before triggered tools for local providers' do
-        always_entries = []
         hinted_entries = [
           { name: 'legion_hinted', description: 'Hinted tool',
             input_schema: { type: 'object', properties: {} }, deferred: true }
@@ -352,19 +322,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
           { name: 'legion_triggered', description: 'Triggered tool',
             input_schema: { type: 'object', properties: {} }, deferred: false }
         ]
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { hinted_entries + triggered_entries }
-          define_singleton_method(:filter_tools) do |**criteria|
-            if criteria[:deferred] == false
-              always_entries
-            elsif criteria[:deferred] == true
-              hinted_entries
-            else
-              hinted_entries + triggered_entries
-            end
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries(hinted_entries + triggered_entries)
         Legion::LLM.settings[:tools][:trigger][:local_tool_limit] = 1
 
         req = Legion::LLM::Inference::Request.build(messages: [{ role: :user, content: 'test' }])
@@ -875,15 +833,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'uses Legion::LLM::Call::Dispatch when Settings::Extensions tools are available' do
-      extensions_mod = Module.new do
-        define_singleton_method(:tools) do
-          [{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }]
-        end
-        define_singleton_method(:filter_tools) do |**criteria|
-          criteria[:deferred] == false ? tools : []
-        end
-      end
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries([{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }])
       merge_llm_settings({
                            'provider_layer' => {
                              'mode' => 'auto'
@@ -895,15 +845,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'allows Legion::LLM::Call::Dispatch when tools were explicitly disabled' do
-      extensions_mod = Module.new do
-        define_singleton_method(:tools) do
-          [{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }]
-        end
-        define_singleton_method(:filter_tools) do |**criteria|
-          criteria[:deferred] == false ? tools : []
-        end
-      end
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries([{ name: 'registry_tool', description: 'Tool', input_schema: {}, deferred: false }])
       toolless_request = Legion::LLM::Inference::Request.build(
         messages: [{ role: :user, content: 'no tools' }],
         routing:  { provider: :bedrock, model: 'claude-sonnet-4-6' },
@@ -945,16 +887,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
           define_singleton_method(:call) { |**| 'result text' }
         end
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'my_tool', description: 'My tool', input_schema: { type: 'object', properties: {} },
-               tool_class: tool_class, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'my_tool', description: 'My tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }])
 
         call_count = 0
         responder = lambda do |_op, _args, _kwargs, _blk|
@@ -989,16 +923,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
           define_singleton_method(:call) { |**| { error: 'failed' } }
         end
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'failing_tool', description: 'Failing tool', input_schema: { type: 'object', properties: {} },
-               tool_class: tool_class, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'failing_tool', description: 'Failing tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }])
 
         call_count = 0
         responder = lambda do |_op, _args, _kwargs, _blk|
@@ -1026,16 +952,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
           define_singleton_method(:call) { |**| large_result }
         end
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'big_tool', description: 'Big tool', input_schema: { type: 'object', properties: {} },
-               tool_class: tool_class, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'big_tool', description: 'Big tool', input_schema: { type: 'object', properties: {} },
+               tool_class: tool_class, deferred: false }])
 
         call_count = 0
         responder = lambda do |_op, _args, _kwargs, _blk|

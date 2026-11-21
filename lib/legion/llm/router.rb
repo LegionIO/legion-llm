@@ -373,20 +373,14 @@ module Legion
         log.warn("[llm][router] action=no_candidate candidates=#{candidates.size} " \
                  "pub_statuses=#{pub_statuses.size} generation=#{gen} counts=#{counts.inspect}")
 
-        # Steps 1-2 — explicit-pin checks (skipped when no pins supplied).
-        if pins.any?
-          if candidates.any? && candidates.all? { |c| c.pin_state == :mismatch } &&
-             (pub_statuses.empty? || pub_statuses.all? { |s| s.state == :complete })
-            return rejection_of(:invalid_request, 400,
-                                'explicit pin not found in any complete publication scope', gen, counts, pins)
-          end
-
-          unless pub_statuses.any? { |s| s.state == :complete }
-            return rejection_of(:too_early, 425,
-                                'explicit pin resolution blocked; all publication scopes are initializing or absent',
-                                gen, counts, pins)
-          end
-        end
+        # Global counts remain diagnostic; rejection semantics use only the
+        # request's possible targets in this same captured evaluation.
+        catalog_complete = pub_statuses.any? { |status| status.state == :complete }
+        candidates = candidates.reject { |candidate| candidate.pin_state == :mismatch }
+        pub_statuses = rejection_publications(publications: pub_statuses, pins: pins)
+        pin_failure = missing_pin_rejection(candidates: candidates, publications: pub_statuses,
+                                            catalog_complete: catalog_complete, gen: gen, counts: counts, pins: pins)
+        return pin_failure if pin_failure
 
         # Cold/empty catalog.
         if candidates.empty?
@@ -394,6 +388,12 @@ module Legion
                               'no selectable candidates; catalog is cold or all scopes are initializing',
                               gen, counts, pins)
         end
+
+        # An embedding lane cannot explain why a chat request has no target.
+        # Keep all-unsupported evidence, however, so the dependency rejection
+        # below remains authoritative instead of becoming an empty scope.
+        operation_candidates = candidates.reject { |candidate| candidate.operation_state == :unsupported }
+        candidates = operation_candidates unless operation_candidates.empty?
 
         # Step 3 — policy_denied 403.
         if candidates.all? { |c| c.policy_state == :denied || c.weight_state == :disabled }
@@ -465,7 +465,7 @@ module Legion
           c.operation_state == :unknown || c.capability_state == :unknown || c.context_state == :unknown ||
             c.dimension_state == :unknown || c.availability_state == :unknown || c.fleet_contract_state == :unknown
         end
-        if has_any_unknown
+        if has_any_unknown || pub_statuses.any? { |status| status.state == :initializing }
           return rejection_of(:too_early, 425,
                               'some candidates have unknown evidence; system may still be initializing',
                               gen, counts, pins)
@@ -481,6 +481,31 @@ module Legion
         rejection_of(:service_unavailable, 503,
                      'all eligible candidates are consumed or unavailable for this request',
                      gen, counts, pins)
+      end
+
+      def rejection_publications(publications:, pins:, **)
+        return publications unless pins[:provider] || pins[:instance]
+
+        publications.select do |status|
+          key = status.instance_key
+          (!pins[:provider] || key.provider_family == pins[:provider]) &&
+            (!pins[:instance] || key.instance_id == pins[:instance])
+        end
+        # Publication keys do not attest model or tier before lanes exist.
+        # Never infer either from provider names or discard a possible publisher.
+      end
+
+      def missing_pin_rejection(candidates:, publications:, catalog_complete:, gen:, counts:, pins:, **)
+        return nil if pins.empty?
+
+        if candidates.empty? && catalog_complete && publications.none? { |status| status.state == :initializing }
+          return rejection_of(:invalid_request, 400,
+                              'explicit pin not found in any complete publication scope', gen, counts, pins)
+        end
+        return nil if candidates.any? && publications.any? { |status| status.state == :complete }
+
+        rejection_of(:too_early, 425,
+                     'explicit pin resolution blocked; publication scope is initializing or absent', gen, counts, pins)
       end
 
       # Step 4b — failed_dependency 424 within the PINNED scope. When explicit

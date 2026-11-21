@@ -2,12 +2,15 @@
 
 require 'legion/extensions/llm/fleet/protocol'
 require 'legion/extensions/llm/taxonomies'
+require 'legion/logging/helper'
 
 module Legion
   module LLM
     module Inference
       # Shared executor helpers for direct/fleet provider dispatch attempt metadata.
       module RouteAttempts
+        include Legion::Logging::Helper
+
         # N9: :headers was a dead contract key — nothing populates it in the
         # SSOT dispatch path (native_dispatch_options), and per-request caller
         # headers are a transport concern of the calling side, not fleet wire.
@@ -328,8 +331,33 @@ module Legion
           extras = NONCONTRACT_GENERATION_KEYS.each_with_object({}) do |key, acc|
             acc[key] = options[key] if options.key?(key) && !options[key].nil?
           end
-          projected[:params] = extras.empty? ? params : params.with(**extras)
+          params = params.with(**extras) unless extras.empty?
+          projected[:params] = effective_dispatch_params(params: params)
           [folded, projected]
+        end
+
+        # The request's output allowance remains the routing reservation. Each
+        # dispatch derives its executable ceiling from that allowance and the
+        # exact selected lane, before direct execution or fleet serialization.
+        def effective_dispatch_params(params:)
+          requested = params.max_tokens
+          return params if requested.nil?
+
+          attempt = @current_attempt_context
+          evidence = attempt.lane.max_output_evidence
+          effective = evidence.known? ? [requested, evidence.value].min : requested
+          @timeline.record(
+            category: :routing, key: 'provider:output_limit', direction: :internal,
+            from: 'request', to: 'provider',
+            detail: "output ceiling requested=#{requested} effective=#{effective}",
+            data: {
+              requested_max_tokens: requested, effective_max_tokens: effective,
+              native_max_tokens: evidence.value, source: evidence.source, evidence_status: evidence.status,
+              lane_id: attempt.lane.lane_id, inventory_generation: attempt.inventory_generation,
+              attempt_number: attempt.attempt_number, tool_round: @native_tool_loop_round.to_i
+            }
+          )
+          effective == requested ? params : params.with(max_tokens: effective)
         end
 
         def fold_system_into_messages(messages:, system:)

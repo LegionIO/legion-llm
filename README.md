@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="License" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg">
   <img alt="Ruby" src="https://img.shields.io/badge/ruby-3.4%2B-CC342D.svg">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.16.21-informational.svg">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.16.37-informational.svg">
   <img alt="Tests" src="https://img.shields.io/badge/tests-3200%2B%20examples%20·%200%20failures-success.svg">
   <img alt="RuboCop" src="https://img.shields.io/badge/rubocop-0%20offenses-success.svg">
 </p>
@@ -218,6 +218,27 @@ Each lane decision reads one immutable live Inventory snapshot; filters compare
 the Router's request facts with published evidence, ranking consumes stored weights,
 and dispatch preserves the resulting exact Selection. Retries retain the same
 Router, immutable facts and request-local attempt state.
+
+Rejection classification uses candidates inside the request's hard pins and
+operation scope. An unrelated provider's unknown or initializing state cannot
+soften a settled failure into a retryable error. Initializing publications remain
+relevant when their authoritative provider/instance keys match; their future
+model and tier membership is not inferred. Diagnostic counts still cover the
+captured inventory snapshot.
+
+Chat Completions `reasoning_effort` is translated into canonical thinking controls
+and preserved through inference and dispatch. Supported efforts, including `none`,
+use the canonical validation vocabulary; invalid values return HTTP 400 before
+provider execution. An omitted effort remains absent and no budget is invented.
+
+The client or configured output allowance remains the request's context reservation.
+Before each provider call, canonical dispatch caps that allowance to the selected
+lane's native maximum output when Inventory has known evidence. Unknown limits
+leave the allowance unchanged. Retries and tool continuations derive the cap anew
+from the original request and their selected lane; direct and fleet calls receive
+the same effective canonical Params. The execution timeline records requested and
+effective limits, evidence source, and attempt identity. Exhausting the effective
+output limit still produces a token-limit stop, including `incomplete` Responses.
 
 Fleet serialization preserves canonical media source enums through the shared
 rehydration boundary. Signed binding/media tampering and Inventory mismatches
@@ -453,6 +474,10 @@ matches. Instances share a space only when they publish matching revision
 evidence; unknown revisions remain isolated by instance. Persist this provenance
 with vectors and compare only compatible spaces.
 
+The `/v1/embeddings` response body, routing headers, and prompt audit identify the
+selected model that generated the vectors. An incoming auto-routing alias such as
+`legionio` does not replace that model attribution, for either single inputs or batches.
+
 The embedding path validates every vector and chunk before returning a result.
 Malformed output is retried through the existing Router policy rather than
 silently dropping chunks. Legacy cache entries without provenance and entries
@@ -466,6 +491,8 @@ framework savings without charging for another provider execution. Missing
 provider usage remains zero; embedding dimensions are not counted as output tokens.
 
 ### Tool Use
+
+Tool discovery and selection reuse framework registry views within each inference request. MCP client discovery invalidates the view because it can publish new or updated tools, even before reporting a discovery failure. Native injection then reads a fresh view on the same request. New requests also read fresh registry state. Inventory-listing tools and execution-time override lookups query the live registry. Selection order, trigger limits, sticky behavior, and tool execution ownership are preserved.
 
 Define tools as native tool definitions or registered Legion tool classes. The inference executor forwards tool definitions to native providers and dispatches tool calls through `Inference::ToolDispatcher`:
 
@@ -1151,7 +1178,7 @@ bundle exec rubocop -A
 | `legion-settings` | Configuration defaults and file overrides |
 | `legion-transport` (>= 1.4.31) | Encoded-payload validation and AMQP transport for fleet dispatch, metering, and audit |
 | `lex-knowledge` | Optional knowledge chunking integration when loaded |
-| `lex-llm` (>= 0.8.6) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, and exact fleet execution/rehydration |
+| `lex-llm` (>= 0.8.10) | Shared Canonical types, immutable `Routing::RequestRequirements`, Inventory/Selection contracts, canonical fleet controls, and streaming terminal preservation |
 | `pdf-reader` | PDF extraction support |
 | `tzinfo` (>= 2.0) | IANA timezone conversion for schedule windows |
 
