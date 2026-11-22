@@ -152,8 +152,9 @@ module Legion
             name:        LIST_SPECIAL_TOOLS_NAME,
             description: 'Show all Legion special tools available to this LLM from the current Legion::Settings::Extensions inventory.',
             parameters:  {
-              type:       'object',
-              properties: {}
+              type:                 'object',
+              properties:           {},
+              additionalProperties: false
             },
             source:      { type: :special, handler: :settings_extensions_inventory, pinned: true }
           )

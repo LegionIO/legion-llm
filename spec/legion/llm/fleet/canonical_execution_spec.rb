@@ -48,7 +48,7 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
     end
   end
 
-  def activate_callable(provider_family:)
+  def activate_callable(provider_family:, max_output: 65_536)
     callable = case provider_family
                when :vllm
                  Legion::Extensions::Llm::Vllm::Helpers::Callable.new(
@@ -73,19 +73,19 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
     SsotV3SnapshotFactory.activate(
       provider_family: provider_family, instance_id: 'primary', callable: callable,
       drafts: [SsotV3SnapshotFactory.offering_draft(
-        model: model, capabilities: { vision: :supported }, context: 131_072, max_output: 65_536,
+        model: model, capabilities: { vision: :supported }, context: 131_072, max_output: max_output,
         weight_inputs: { tier: 100, provider: 100, instance: 100, model_or_offering: 100 }, base_weight: 100_000_000
       )]
     )
     stubs
   end
 
-  def execution_for(request:)
+  def execution_for(request:, dispatch_options: {})
     router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: nil)
     attempt = router.next_attempt!
     executor = Legion::LLM::Inference::Executor.new(request)
     executor.send(:populate_ssot_v3_resolved_state, attempt)
-    binding = executor.send(:fleet_dispatch_request, request.messages, SecureRandom.uuid, dispatch_options: {})
+    binding = executor.send(:fleet_dispatch_request, request.messages, SecureRandom.uuid, dispatch_options: dispatch_options)
     envelope = Legion::LLM::Fleet::Dispatcher.build_envelope(
       operation: attempt.selection.operation, request_opts: binding,
       message_context: { request_id: request.id }, reply_to: 'llm.fleet.reply.test', routing_key: 'llm.test'
@@ -94,6 +94,61 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
   end
 
   %i[vllm openai].each do |provider_family|
+    it "preserves closed inventory and open caller schemas through signed fleet and direct #{provider_family} HTTP requests" do
+      stubs = activate_callable(provider_family: provider_family)
+      inventory = Legion::Extensions::Llm::Canonical::ToolDefinition.from_hash(Legion::LLM::Tools::Special.special_tools_definition.to_h)
+      caller_tool = Legion::Extensions::Llm::Canonical::ToolDefinition.build(
+        name: 'open_record', parameters: { type: 'object', properties: {} }
+      )
+      options = { tools: { inventory.name => inventory, caller_tool.name => caller_tool } }
+      request = client_requests.first
+      attempt, envelope = execution_for(request: request, dispatch_options: options)
+
+      direct = Legion::LLM::Call::SelectionDispatch.call(attempt_context: attempt, arguments: options.merge(messages: request.messages))
+      remote = worker.call(envelope: envelope, registry: Legion::Extensions::Llm::Inventory::Registry)
+
+      expect(direct).to be_success
+      expect(remote.text).to eq(direct.value.text)
+      expect(wire_requests.size).to eq(2)
+      wire_requests.each do |wire|
+        schemas = wire.fetch(:tools).to_h { |tool| [tool[:function][:name], tool[:function][:parameters]] }
+        expect(schemas.fetch(inventory.name)).to eq(type: 'object', properties: {}, additionalProperties: false)
+        expect(schemas.fetch(caller_tool.name)).to eq(type: 'object', properties: {})
+      end
+      stubs.verify_stubbed_calls
+    end
+
+    it "preserves the effective canonical output ceiling through signed fleet and direct #{provider_family} execution" do
+      stubs = activate_callable(provider_family: provider_family, max_output: 16_384)
+      client_requests.each do |request|
+        router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: nil)
+        attempt = router.next_attempt!
+        executor = Legion::LLM::Inference::Executor.new(request)
+        executor.send(:populate_ssot_v3_resolved_state, attempt)
+        original_tokens = request.tokens.dup
+        messages, options = executor.send(:project_dispatch_arguments, messages: request.messages,
+                                                                       options:  executor.send(:native_dispatch_options))
+        binding = executor.send(:fleet_dispatch_request, messages, SecureRandom.uuid, dispatch_options: options)
+        envelope = Legion::LLM::Fleet::Dispatcher.build_envelope(
+          operation: attempt.selection.operation, request_opts: binding,
+          message_context: { request_id: request.id }, reply_to: 'llm.fleet.reply.test', routing_key: 'llm.test'
+        )
+        wire_envelope = Legion::JSON.load(Legion::JSON.dump(envelope))
+
+        expect(options.fetch(:params)).to be_a(Legion::Extensions::Llm::Canonical::Params)
+        expect(options.fetch(:params).max_tokens).to eq(16_384)
+        direct = Legion::LLM::Call::SelectionDispatch.call(attempt_context: attempt, arguments: options.merge(messages: messages))
+        remote = worker.call(envelope: wire_envelope, registry: Legion::Extensions::Llm::Inventory::Registry)
+
+        expect(direct).to be_success
+        expect(remote.text).to eq(direct.value.text)
+        expect(wire_requests.last(2).map { |wire| wire[:max_tokens] }).to eq([16_384, 16_384])
+        expect(request.tokens).to eq(original_tokens)
+        expect(router.required_output_tokens).to eq(original_tokens.fetch(:max))
+      end
+      stubs.verify_stubbed_calls
+    end
+
     it "preserves all three client dialects through exact direct and signed fleet execution on #{provider_family}" do
       stubs = activate_callable(provider_family: provider_family)
       client_requests.each do |request|

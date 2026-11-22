@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Executor do
+RSpec.describe Legion::LLM::Inference::Executor, tool_registry: true do
   let(:tool_definition) do
     Legion::LLM::Types::ToolDefinition.build(name: 'my_tool', description: 'My tool')
   end
@@ -30,15 +31,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'pins the Legion special tool inventory before all other tools' do
-      extensions_mod = Module.new do
-        define_singleton_method(:tools) do
-          [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
-        end
-        define_singleton_method(:filter_tools) do |**criteria|
-          criteria[:deferred] == false ? tools : []
-        end
-      end
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }])
 
       executor = described_class.new(request_with_tools)
       names = executor.send(:native_tool_definitions).map(&:name)
@@ -137,15 +130,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'still injects registry tools when client and server tools are mixed' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }])
 
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
@@ -174,21 +159,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
           def self.call(*); end
         end
 
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { [] }
-          define_singleton_method(:filter_tools) { [] }
-          define_singleton_method(:find_tool) do |name|
-            return nil unless name.to_s == 'registry_lookup'
-
-            {
-              name:         'registry_lookup',
-              description:  'Registry lookup',
-              input_schema: {},
-              tool_class:   resolved_tool_class
-            }
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_lookup', description: 'Registry lookup',
+                                 input_schema: {}, tool_class: resolved_tool_class, deferred: true }])
 
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'lookup from registry' }],
@@ -205,23 +177,9 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'resolves sanitized LegionIO client-shaped tools back to dotted registry tools' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { [] }
-          define_singleton_method(:filter_tools) { [] }
-          define_singleton_method(:find_tool) do |name|
-            return nil unless name.to_s == 'legion.microsoft_teams_create_chain'
-
-            {
-              name:         'legion.microsoft_teams_create_chain',
-              description:  'Create a Teams chain',
-              input_schema: {},
-              extension:    'lex-microsoft_teams',
-              runner:       'chains',
-              function:     'create_chain'
-            }
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'legion.microsoft_teams_create_chain', description: 'Create a Teams chain',
+                                 input_schema: {}, extension: 'lex-microsoft_teams', runner: 'chains',
+                                 function: 'create_chain', deferred: true }])
 
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'create a chain' }],
@@ -243,13 +201,6 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'treats all-client tool requests as client passthrough but still injects pinned special tools' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) { [] }
-          define_singleton_method(:filter_tools) { [] }
-          define_singleton_method(:find_tool) { |_name| nil }
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
-
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'no registry tool' }],
           tools:    [{ name: 'local_client_only', description: 'Client tool', parameters: {}, source: { type: :client, executable: false } }],
@@ -268,14 +219,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
       end
 
       it 'injects registry tools alongside client tools regardless of passthrough mode' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) { |**| [] }
-          define_singleton_method(:find_tool) { |**_| nil }
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }])
 
         client_tool = Legion::LLM::Types::ToolDefinition.build(
           name:        'client_shell',
@@ -400,30 +344,14 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     context 'when @request.tools is an empty array []' do
       it 'adds registry tools in addition to the empty client list' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }])
 
         executor = described_class.new(request_empty_tools)
         expect(executor.send(:native_tool_definitions).map(&:name)).to include('registry_tool')
       end
 
       it 'injects requested deferred registry tools from metadata' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: true }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == true ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: true }])
         request = Legion::LLM::Inference::Request.build(
           messages: [{ role: :user, content: 'use registry tool' }],
           tools:    [],
@@ -439,15 +367,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
     context 'when @request.tools is a non-Array (nil via direct construction)' do
       it 'adds Settings::Extensions tools' do
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? tools : []
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries([{ name: 'registry_tool', description: 'Registry tool', input_schema: {}, deferred: false }])
 
         executor = described_class.new(request_with_tools)
         stub_req = double('request',

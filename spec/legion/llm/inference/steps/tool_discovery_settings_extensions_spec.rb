@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
+RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery, tool_registry: true do
   let(:request) do
     Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'discover tools' }],
@@ -25,19 +26,8 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
         ]
       end
 
-      let(:extensions_mod) do
-        entries = tool_entries
-        Module.new do
-          define_singleton_method(:tools) { entries }
-          define_singleton_method(:tool_count) { entries.size }
-          define_singleton_method(:filter_tools) do |**criteria|
-            criteria[:deferred] == false ? entries : []
-          end
-        end
-      end
-
       it 'discovers tools from Settings::Extensions' do
-        stub_const('Legion::Settings::Extensions', extensions_mod)
+        register_tool_entries(tool_entries)
 
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)
@@ -50,8 +40,6 @@ RSpec.describe Legion::LLM::Inference::Steps::ToolDiscovery do
 
     context 'when Settings::Extensions has no tools' do
       it 'does not discover any tools' do
-        allow(Legion::Settings::Extensions).to receive(:tool_count).and_return(0)
-
         executor.send(:discover_registry_tools)
         discovered = executor.instance_variable_get(:@discovered_tools)
 

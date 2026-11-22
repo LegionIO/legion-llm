@@ -25,10 +25,45 @@ RSpec.describe 'Namespaces::OpenAI::Embeddings' do
   before do
     allow(Legion::LLM).to receive(:started?).and_return(true)
     Legion::Settings[:llm][:default_model] = 'legionio'
-    allow(Legion::LLM).to receive(:embed).and_return([0.1, 0.2, 0.3])
+    allow(Legion::LLM).to receive(:embed).and_return(
+      { vector: [0.1, 0.2, 0.3], model: 'embedding-model', provider: :ollama, instance: 'primary' }
+    )
   end
 
   describe 'POST /v1/embeddings' do
+    it 'attributes an auto-routed vector to the selected model in the body, headers, and audit' do
+      result = { vector: [0.1, 0.2], model: 'selected-embedding', provider: :ollama,
+                 instance: 'primary', tier: :direct, tokens: 2 }
+      allow(Legion::LLM).to receive(:embed).and_return(result)
+      allow(Legion::LLM::Audit).to receive(:emit_prompt)
+
+      post '/v1/embeddings', Legion::JSON.dump({ input: 'Hello', model: 'legionio' }),
+           'CONTENT_TYPE' => 'application/json'
+
+      expect(last_response.status).to eq(200)
+      expect(Legion::JSON.load(last_response.body)[:model]).to eq('selected-embedding')
+      expect(last_response.headers['x-legion-model']).to eq('selected-embedding')
+      expect(Legion::LLM::Audit).to have_received(:emit_prompt).with(
+        hash_including(routing: { model: 'selected-embedding', provider: 'ollama' })
+      )
+    end
+
+    it 'attributes an auto-routed batch to the shared selected model' do
+      allow(Legion::LLM).to receive(:embed_batch).and_return(
+        [
+          { vector: [0.1, 0.2], model: 'selected-embedding', provider: :ollama, instance: 'primary' },
+          { vector: [0.3, 0.4], model: 'selected-embedding', provider: :ollama, instance: 'primary' }
+        ]
+      )
+
+      post '/v1/embeddings', Legion::JSON.dump({ input: %w[Hello world], model: 'legionio' }),
+           'CONTENT_TYPE' => 'application/json'
+
+      expect(last_response.status).to eq(200)
+      expect(Legion::JSON.load(last_response.body)).to include(model: 'selected-embedding')
+      expect(Legion::JSON.load(last_response.body)[:data].map { |entry| entry[:index] }).to eq([0, 1])
+    end
+
     it 'returns 400 with the complete OpenAI error envelope when input is missing' do
       post '/v1/embeddings', Legion::JSON.dump({ model: 'legionio' }), 'CONTENT_TYPE' => 'application/json'
       expect(last_response.status).to eq(400)
@@ -51,7 +86,7 @@ RSpec.describe 'Namespaces::OpenAI::Embeddings' do
       expect(body[:data]).to be_an(Array)
       expect(body[:data].first[:object]).to eq('embedding')
       expect(body[:data].first[:embedding]).to eq([0.1, 0.2, 0.3])
-      expect(body[:model]).to eq('legionio')
+      expect(body[:model]).to eq('embedding-model')
     end
 
     # OpenAI contract: N input strings -> N data entries, sequential index,
@@ -59,7 +94,10 @@ RSpec.describe 'Namespaces::OpenAI::Embeddings' do
     # deviation D2 of the 2026-08-17 e2e contract).
     it 'handles array input with one entry per element (N -> N)' do
       allow(Legion::LLM).to receive(:embed_batch).and_return(
-        [{ vector: [0.1, 0.2, 0.3] }, { vector: [0.4, 0.5, 0.6] }]
+        [
+          { vector: [0.1, 0.2, 0.3], model: 'embedding-model', provider: :ollama, instance: 'primary' },
+          { vector: [0.4, 0.5, 0.6], model: 'embedding-model', provider: :ollama, instance: 'primary' }
+        ]
       )
       post '/v1/embeddings',
            Legion::JSON.dump({ input: %w[Hello world], model: 'legionio' }),

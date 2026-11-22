@@ -186,6 +186,18 @@ def merge_llm_settings(overrides)
 end
 
 RSpec.configure do |config|
+  # Curation outlives Executor#call. Finish accepted work while this example's
+  # mocks/settings still exist, before the next example resets the settings
+  # loader. Concurrent loader initialization can otherwise erase registered
+  # defaults and make unrelated routing examples fail intermittently.
+  config.after(:each) do
+    next if Legion::LLM::Inference::Background.stats[:state] == :idle
+
+    raise 'inference background work did not drain before fixture teardown' unless Legion::LLM::Inference::Background.shutdown
+
+    Legion::LLM::Inference::Background.start
+  end
+
   config.before(:each) do
     Legion::Settings.reset!
     Legion::LLM::Settings.register_defaults!

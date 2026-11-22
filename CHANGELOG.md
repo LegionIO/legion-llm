@@ -1,5 +1,35 @@
 # Legion LLM Changelog
 
+## [0.16.38] - 2026-11-22
+
+### Fixed
+- Declare the built-in `legion_list_special_tools` argument object closed, matching its zero-argument handler. This prevents forced inventory streams from stalling after the tool name and lets the MCP SDK reject unexpected arguments before execution. Preserve caller-owned open schemas and other built-in arguments; cover all three client formats, synchronous/streaming injection, and native direct/signed-fleet serialization. Fixes #232.
+
+## [0.16.37] - 2026-11-20
+
+### Fixed
+- Classify routing rejections within the request's pinned provider, instance, model, and tier scope. Unrelated unknown, unavailable, or initializing inventory no longer turns settled context, policy, or capability failures into retryable errors. Preserve relevant initializing publications when their model or tier is not yet known, keep global diagnostic counts, and retain the original requested context reservation.
+- Preserve Chat Completions `reasoning_effort` through canonical request parsing, JSON transport, inference construction, and provider dispatch. The shared canonical contract validates supported efforts without inventing a budget; invalid caller values receive HTTP 400 before execution instead of being silently ignored.
+
+### Changed
+- Require `lex-llm >= 0.8.10` for canonical fleet control rehydration and shared streaming terminal preservation. CI and security checks use the same immutable companion commit until that release is published.
+
+## [0.16.36] - 2026-11-20
+
+### Fixed
+- Bound each canonical provider dispatch by the selected lane's published native output ceiling when known, while preserving the original client/configured allowance and Router context reservation. Recompute the effective ceiling for every retry and tool round, carry it unchanged through direct and signed fleet execution, and record requested/effective limits with their Inventory evidence and attempt identity in the execution timeline. Unknown evidence preserves the requested allowance; token-limited responses remain incomplete.
+
+## [0.16.35] - 2026-11-20
+
+### Fixed
+- Render the selected embedding model in `/v1/embeddings` responses and prompt audit events, matching routing headers for single inputs and batches. Consume the canonical embedding result artifact instead of echoing an auto-routing alias or accepting bare vectors without attribution. Add route-level regressions covering model identity across the response body, headers, and audit.
+
+## [0.16.34] - 2026-11-19
+
+### Fixed
+- Reuse framework tool-registry views across discovery, trigger matching, sticky state, GAIA hints, and tool injection. Invalidate the view across MCP client discovery, including partial failures, so published tools and schema updates reach native injection on the same request. Reuse the framework's deferred filters and index matches by tool name, avoiding repeated per-step entry copies, schema hashing, and linear always-loaded membership scans. Preserve tool ordering, caps, metadata, and execution ownership; new requests observe registry updates while live inventory tools and execution-time lookups remain live. Replace affected registry doubles with real registered fixtures and cover all three client formats in synchronous and streaming execution. Fixes #221.
+- Drain accepted background work before test fixtures reset settings and mocks, preventing asynchronous curation from racing settings-loader initialization in later examples.
+
 ## [0.16.33] - 2026-11-19
 
 ### Fixed

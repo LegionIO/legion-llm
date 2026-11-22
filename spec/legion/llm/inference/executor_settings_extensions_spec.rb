@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Executor do
+RSpec.describe Legion::LLM::Inference::Executor, tool_registry: true do
   let(:base_request) do
     Legion::LLM::Inference::Request.build(
       messages: [{ role: :user, content: 'hello' }],
@@ -54,26 +55,8 @@ RSpec.describe Legion::LLM::Inference::Executor do
       ]
     end
 
-    let(:extensions_mod) do
-      all_entries = tool_entries + deferred_entries
-      non_deferred = tool_entries
-      deferred = deferred_entries
-      Module.new do
-        define_singleton_method(:tools) { all_entries }
-        define_singleton_method(:filter_tools) do |**criteria|
-          if criteria[:deferred] == false
-            non_deferred
-          elsif criteria[:deferred] == true
-            deferred
-          else
-            all_entries
-          end
-        end
-      end
-    end
-
     it 'builds definitions from Settings::Extensions entries' do
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries(tool_entries + deferred_entries)
 
       executor = described_class.new(base_request)
       definitions = []
@@ -84,7 +67,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'tracks tool_class in injected_tool_map' do
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries(tool_entries + deferred_entries)
 
       executor = described_class.new(base_request)
       definitions = []
@@ -97,7 +80,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'tracks source in native_tool_source_map' do
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries(tool_entries + deferred_entries)
 
       executor = described_class.new(base_request)
       definitions = []
@@ -109,7 +92,7 @@ RSpec.describe Legion::LLM::Inference::Executor do
     end
 
     it 'applies the local tool limit only to registry-added tools' do
-      stub_const('Legion::Settings::Extensions', extensions_mod)
+      register_tool_entries(tool_entries + deferred_entries)
       Legion::Settings[:llm][:tools][:trigger][:local_tool_limit] = 1
       client_tools = [
         Legion::LLM::Types::ToolDefinition.build(name: 'client_one', description: 'Client one'),
@@ -132,8 +115,6 @@ RSpec.describe Legion::LLM::Inference::Executor do
 
   describe '#add_registry_tool_definitions when Settings::Extensions has no tools' do
     it 'does not add any tools' do
-      allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
-
       executor = described_class.new(base_request)
       definitions = []
       executor.send(:add_registry_tool_definitions, definitions)
@@ -147,8 +128,6 @@ RSpec.describe Legion::LLM::Inference::Executor do
         define_singleton_method(:description) { 'Triggered dynamic tool' }
         define_singleton_method(:input_schema) { { type: 'object', properties: {} } }
       end
-      allow(Legion::Settings::Extensions).to receive(:tools).and_return([])
-      allow(Legion::Settings::Extensions).to receive(:filter_tools).and_return([])
 
       executor = described_class.new(base_request)
       executor.instance_variable_set(:@triggered_tools, [triggered_tool])

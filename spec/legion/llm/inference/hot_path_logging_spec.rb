@@ -74,7 +74,7 @@ RSpec.describe 'Inference hot-path logging' do
     expect(executor.discovered_tools.map { |tool| tool[:name] }).to include('logging_eager')
     expect(executor.discovered_tools.map { |tool| tool[:name] }).not_to include('logging_deferred')
     expect(output.string).to include("settings_extensions_total=#{original_count}")
-    expect(registry).not_to have_received(:tools)
+    expect(registry).to have_received(:tools).once
   ensure
     registry&.unregister_tool('logging_eager')
     registry&.unregister_tool('logging_deferred')

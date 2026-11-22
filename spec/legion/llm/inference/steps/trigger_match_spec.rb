@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require_relative '../../../../support/tool_registry'
 
-RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
+RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch, tool_registry: true do
   let(:klass) do
     Class.new do
       include Legion::LLM::Inference::Steps::TriggerMatch
@@ -27,11 +28,10 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
 
   before do
     Legion::Settings[:llm][:tools][:trigger].merge!(scan_depth: 10, tool_limit: 50)
-    hide_const('Legion::Settings::Extensions') if defined?(Legion::Settings::Extensions)
   end
 
   describe '#step_trigger_match' do
-    context 'when Settings::Extensions is not defined' do
+    context 'when the registry is empty' do
       it 'returns without doing anything' do
         step.step_trigger_match
         expect(step.triggered_tools).to be_empty
@@ -41,13 +41,6 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     end
 
     context 'when Settings::Extensions has no tools' do
-      before do
-        stub_const('Legion::Settings::Extensions', Module.new do
-          def self.tools = []
-          def self.filter_tools(**) = []
-        end)
-      end
-
       it 'returns without populating triggered_tools' do
         step.step_trigger_match
         expect(step.triggered_tools).to be_empty
@@ -58,14 +51,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       let(:tool_a) { { name: 'github_list_prs', extension: 'lex-github', runner: 'pull_requests', function: 'list' } }
       let(:tool_b) { { name: 'github_create_pr', extension: 'lex-github', runner: 'pull_requests', function: 'create' } }
 
-      before do
-        ta = tool_a
-        tb = tool_b
-        stub_const('Legion::Settings::Extensions', Module.new do
-          define_singleton_method(:tools) { [ta, tb] }
-          define_singleton_method(:filter_tools) { |**| [] }
-        end)
-      end
+      before { register_tool_entries([tool_a.merge(deferred: true), tool_b.merge(deferred: true)]) }
 
       it 'populates triggered_tools' do
         step.step_trigger_match
@@ -96,12 +82,8 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       end
 
       before do
-        ts = tools
         Legion::Settings[:llm][:tools][:trigger].merge!(scan_depth: 2, tool_limit: 5)
-        stub_const('Legion::Settings::Extensions', Module.new do
-          define_singleton_method(:tools) { ts }
-          define_singleton_method(:filter_tools) { |**| [] }
-        end)
+        register_tool_entries(tools.map { |tool| tool.merge(deferred: true) })
       end
 
       it 'caps triggered_tools at tool_limit' do
@@ -114,23 +96,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
       let(:tool_always) { { name: 'always_tool', trigger_words: %w[github] } }
       let(:tool_deferred) { { name: 'deferred_tool', trigger_words: %w[github] } }
 
-      before do
-        ta = tool_always
-        td = tool_deferred
-        extensions_mod = Module.new do
-          define_singleton_method(:tools) do
-            [ta, td]
-          end
-          define_singleton_method(:filter_tools) do |**criteria|
-            if criteria[:deferred] == false
-              [{ name: 'always_tool' }]
-            else
-              []
-            end
-          end
-        end
-        stub_const('Legion::Settings::Extensions', extensions_mod)
-      end
+      before { register_tool_entries([tool_always.merge(deferred: false), tool_deferred.merge(deferred: true)]) }
 
       it 'excludes always-loaded tools from triggered_tools' do
         step.step_trigger_match
@@ -142,12 +108,7 @@ RSpec.describe Legion::LLM::Inference::Steps::TriggerMatch do
     context 'when message content is empty' do
       let(:messages) { [{ role: :user, content: '' }] }
 
-      before do
-        stub_const('Legion::Settings::Extensions', Module.new do
-          def self.tools = [{ name: 'github_list_prs', trigger_words: %w[github] }]
-          def self.filter_tools(**) = []
-        end)
-      end
+      before { register_tool_entries([{ name: 'github_list_prs', trigger_words: %w[github], deferred: true }]) }
 
       it 'returns without populating triggered_tools' do
         step.step_trigger_match
