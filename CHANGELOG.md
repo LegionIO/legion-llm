@@ -1,5 +1,10 @@
 # Legion LLM Changelog
 
+## [0.16.38] - 2026-11-22
+
+### Fixed
+- Declare the built-in `legion_list_special_tools` argument object closed, matching its zero-argument handler. This prevents forced inventory streams from stalling after the tool name and lets the MCP SDK reject unexpected arguments before execution. Preserve caller-owned open schemas and other built-in arguments; cover all three client formats, synchronous/streaming injection, and native direct/signed-fleet serialization. Fixes #232.
+
 ## [0.16.37] - 2026-11-20
 
 ### Fixed

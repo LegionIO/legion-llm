@@ -80,12 +80,12 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
     stubs
   end
 
-  def execution_for(request:)
+  def execution_for(request:, dispatch_options: {})
     router = Legion::LLM::Router.new(request: request, operation: :chat, body_model: nil)
     attempt = router.next_attempt!
     executor = Legion::LLM::Inference::Executor.new(request)
     executor.send(:populate_ssot_v3_resolved_state, attempt)
-    binding = executor.send(:fleet_dispatch_request, request.messages, SecureRandom.uuid, dispatch_options: {})
+    binding = executor.send(:fleet_dispatch_request, request.messages, SecureRandom.uuid, dispatch_options: dispatch_options)
     envelope = Legion::LLM::Fleet::Dispatcher.build_envelope(
       operation: attempt.selection.operation, request_opts: binding,
       message_context: { request_id: request.id }, reply_to: 'llm.fleet.reply.test', routing_key: 'llm.test'
@@ -94,6 +94,30 @@ RSpec.describe 'Canonical exact execution across clients, providers and fleet', 
   end
 
   %i[vllm openai].each do |provider_family|
+    it "preserves closed inventory and open caller schemas through signed fleet and direct #{provider_family} HTTP requests" do
+      stubs = activate_callable(provider_family: provider_family)
+      inventory = Legion::Extensions::Llm::Canonical::ToolDefinition.from_hash(Legion::LLM::Tools::Special.special_tools_definition.to_h)
+      caller_tool = Legion::Extensions::Llm::Canonical::ToolDefinition.build(
+        name: 'open_record', parameters: { type: 'object', properties: {} }
+      )
+      options = { tools: { inventory.name => inventory, caller_tool.name => caller_tool } }
+      request = client_requests.first
+      attempt, envelope = execution_for(request: request, dispatch_options: options)
+
+      direct = Legion::LLM::Call::SelectionDispatch.call(attempt_context: attempt, arguments: options.merge(messages: request.messages))
+      remote = worker.call(envelope: envelope, registry: Legion::Extensions::Llm::Inventory::Registry)
+
+      expect(direct).to be_success
+      expect(remote.text).to eq(direct.value.text)
+      expect(wire_requests.size).to eq(2)
+      wire_requests.each do |wire|
+        schemas = wire.fetch(:tools).to_h { |tool| [tool[:function][:name], tool[:function][:parameters]] }
+        expect(schemas.fetch(inventory.name)).to eq(type: 'object', properties: {}, additionalProperties: false)
+        expect(schemas.fetch(caller_tool.name)).to eq(type: 'object', properties: {})
+      end
+      stubs.verify_stubbed_calls
+    end
+
     it "preserves the effective canonical output ceiling through signed fleet and direct #{provider_family} execution" do
       stubs = activate_callable(provider_family: provider_family, max_output: 16_384)
       client_requests.each do |request|
